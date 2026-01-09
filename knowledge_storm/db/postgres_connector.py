@@ -123,8 +123,8 @@ class PostgresConnector:
         return embedding
 
     def _fetch_context_for_tables(
-        self,
-        table_rows: List[Dict]
+            self,
+            table_rows: List[Dict]
     ) -> Dict[tuple, str]:
         """
         테이블 타입 행들에 대해 직전 텍스트(Context Look-back)를 조회
@@ -151,7 +151,7 @@ class PostgresConnector:
                 # 직전 텍스트 조회 (sequence_order - 1)
                 cur.execute("""
                     SELECT raw_content, section_path, chunk_type
-                    FROM Source_Materials
+                    FROM "Source_Materials"
                     WHERE report_id = %s AND sequence_order = %s
                 """, (report_id, prev_seq))
 
@@ -210,7 +210,7 @@ class PostgresConnector:
                         report_id, 
                         sequence_order,
                         (embedding <=> %s::vector) as distance
-                    FROM Source_Materials
+                    FROM "Source_Materials"
                     ORDER BY distance ASC
                     LIMIT %s
                 """, (embedding_str, top_k))
@@ -253,9 +253,16 @@ class PostgresConnector:
 
                 logger.info(f"Found {len(results)} results for query: {query}")
 
+                return results
+
         except psycopg2.Error as e:
             logger.error(f"Database query failed: {e}")
-            raise
+            self.conn.rollback()  # [핵심] 트랜잭션 복구!
+            return []  # 빈 리스트 반환 (프로그램 중단 방지)
+
+        except Exception as e:
+            logger.error(f"Unexpected error in search: {e}")
+            return []
 
         return results
 
@@ -279,7 +286,9 @@ class PostgresConnector:
 if __name__ == "__main__":
     import sys
     import toml
+
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
 
     def load_api_key(toml_file_path):
         """secrets.toml에서 환경변수 로드 (테스트용 로컬 함수)"""
@@ -292,6 +301,7 @@ if __name__ == "__main__":
             print(f"File not found: {toml_file_path}", file=sys.stderr)
         except toml.TomlDecodeError:
             print(f"Error decoding TOML file: {toml_file_path}", file=sys.stderr)
+
 
     # secrets.toml에서 환경변수 로드
     secrets_path = os.path.join(
@@ -338,4 +348,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"✗ Error: {e}")
         sys.exit(1)
-
