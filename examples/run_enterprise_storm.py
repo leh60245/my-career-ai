@@ -6,6 +6,7 @@ PostgreSQL 내부 DB를 활용한 기업 분석 리포트 생성 파이프라인
 
 Required Environment Variables (secrets.toml):
     - OPENAI_API_KEY: OpenAI API key
+    - GOOGLE_API_KEY: Google Gemini API key (--model-provider gemini 사용 시)
     - OPENAI_API_TYPE: 'openai' (기본값)
     - PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_DATABASE: PostgreSQL 접속 정보
 
@@ -27,9 +28,13 @@ Date: 2026-01-08
 import os
 import sys
 import re
+import json
 import logging
 from datetime import datetime
 from argparse import ArgumentParser
+
+import psycopg2
+from psycopg2.extras import Json
 
 # 프로젝트 루트를 path에 추가
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -39,7 +44,7 @@ from knowledge_storm import (
     STORMWikiRunner,
     STORMWikiLMConfigs,
 )
-from knowledge_storm.lm import OpenAIModel, AzureOpenAIModel
+from knowledge_storm.lm import OpenAIModel, AzureOpenAIModel, GoogleModel
 from knowledge_storm.rm import PostgresRM
 from knowledge_storm.utils import load_api_key
 
@@ -55,10 +60,10 @@ logger = logging.getLogger(__name__)
 # 분석 타겟 리스트 (Batch Processing Targets)
 # ============================================================
 ANALYSIS_TARGETS = [
-    "삼성전자 기업 개요 및 주요 사업의 내용"
-    # "삼성전자 최근 3개년 요약 재무제표 및 재무 상태 분석",
-    # "삼성전자 SWOT 분석 (강점, 약점, 기회, 위협)",
-    # "삼성전자 3C 분석 (자사, 경쟁사, 고객)",
+    # "삼성전자 기업 개요 및 주요 사업의 내용"
+    # "삼성전자 최근 3개년 요약 재무제표 및 재무 상태 분석"
+    # "삼성전자 SWOT 분석 (강점, 약점, 기회, 위협)"
+     "삼성전자 3C 분석 (자사, 경쟁사, 고객)"
     # "삼성전자 채용 공고 및 인재상 분석"
 ]
 
@@ -67,65 +72,238 @@ def create_topic_dir_name(topic: str) -> str:
     """
     토픽명을 파일시스템 호환 디렉토리명으로 변환
 
+    규칙:
+    1. 공백은 언더스코어(_)로 변환
+    2. 윈도우 파일 시스템 금지 문자(/:*?"<>|)만 제거/변환
+    3. 괄호(), 쉼표, 등은 유지 (STORM이 유지하기 때문)
+
     Args:
         topic: 원본 토픽명
 
     Returns:
         언더스코어로 연결된 디렉토리명
     """
-    # 공백, 슬래시, 괄호 등을 언더스코어로 변환
-    dir_name = re.sub(r'[\s/\\()（）,，]', '_', topic)
-    dir_name = re.sub(r'_+', '_', dir_name)  # 연속된 언더스코어 제거
-    dir_name = dir_name.strip('_')
+    # 1. 공백을 언더스코어로 변환
+    dir_name = topic.replace(' ', '_')
+
+    # 2. 파일 시스템 금지 문자만 제거 또는 변환 (/:*?"<>|)
+    # STORM은 보통 /만 _로 바꾸고 나머지는 그대로 두거나 제거함
+    dir_name = dir_name.replace('/', '_').replace('\\', '_')
+    dir_name = re.sub(r'[:*?"<>|]', '', dir_name)
     return dir_name
 
 
-def setup_lm_configs() -> STORMWikiLMConfigs:
+def save_report_to_db(topic: str, output_dir: str, secrets_path: str, model_name: str = "gpt-4o") -> bool:
+    """
+    STORM 실행 결과를 PostgreSQL의 Generated_Reports 테이블에 적재합니다.
+
+    Args:
+        topic: 분석 주제
+        output_dir: STORM 결과 저장 디렉토리
+        secrets_path: secrets.toml 파일 경로
+        model_name: 사용된 LLM 모델명
+
+    Returns:
+        bool: 성공 여부
+    """
+    # 토픽별 결과 디렉토리 경로 생성
+    topic_dir_name = create_topic_dir_name(topic)
+    topic_output_dir = os.path.join(output_dir, topic_dir_name)
+
+    # ========================================
+    # Step 1: 필수 파일 읽기
+    # ========================================
+    # storm_gen_article_polished.txt (필수)
+    polished_article_path = os.path.join(topic_output_dir, "storm_gen_article_polished.txt")
+    if not os.path.exists(polished_article_path):
+        logger.error(f"Required file not found: {polished_article_path}")
+        return False
+
+    with open(polished_article_path, "r", encoding="utf-8") as f:
+        report_content = f.read()
+
+    # url_to_info.json (필수)
+    url_to_info_path = os.path.join(topic_output_dir, "url_to_info.json")
+    if not os.path.exists(url_to_info_path):
+        logger.error(f"Required file not found: {url_to_info_path}")
+        return False
+
+    with open(url_to_info_path, "r", encoding="utf-8") as f:
+        references_data = json.load(f)
+
+    # ========================================
+    # Step 2: 선택 파일 읽기
+    # ========================================
+    # storm_gen_outline.txt (선택)
+    toc_text = None
+    outline_path = os.path.join(topic_output_dir, "storm_gen_outline.txt")
+    if os.path.exists(outline_path):
+        with open(outline_path, "r", encoding="utf-8") as f:
+            toc_text = f.read()
+
+    # conversation_log.json (선택)
+    conversation_log = None
+    conv_log_path = os.path.join(topic_output_dir, "conversation_log.json")
+    if os.path.exists(conv_log_path):
+        with open(conv_log_path, "r", encoding="utf-8") as f:
+            conversation_log = json.load(f)
+
+    # run_config.json (선택)
+    run_config_data = None
+    config_path = os.path.join(topic_output_dir, "run_config.json")
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            run_config_data = json.load(f)
+
+    # raw_search_results.json (선택)
+    raw_search_results_data = None
+    search_results_path = os.path.join(topic_output_dir, "raw_search_results.json")
+    if os.path.exists(search_results_path):
+        with open(search_results_path, "r", encoding="utf-8") as f:
+            raw_search_results_data = json.load(f)
+
+    # ========================================
+    # Step 3: meta_info 생성
+    # ========================================
+    meta_info = {
+        "config": run_config_data,
+        "search_results": raw_search_results_data
+    }
+
+    # ========================================
+    # Step 4: company_name 추출
+    # ========================================
+    company_name = topic.split()[0] if topic else "Unknown"
+
+    # ========================================
+    # Step 5: DB INSERT
+    # ========================================
+    try:
+        # DB 접속 정보 로드
+        conn = psycopg2.connect(
+            host=os.getenv("PG_HOST"),
+            port=os.getenv("PG_PORT", "5432"),
+            user=os.getenv("PG_USER"),
+            password=os.getenv("PG_PASSWORD"),
+            database=os.getenv("PG_DATABASE")
+        )
+
+        cursor = conn.cursor()
+
+        insert_query = """
+        INSERT INTO "Generated_Reports"
+        (company_name, topic, report_content, toc_text, references_data, conversation_log, meta_info, model_name)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+
+        cursor.execute(insert_query, (
+            company_name,
+            topic,
+            report_content,
+            toc_text,
+            Json(references_data) if references_data else None,
+            Json(conversation_log) if conversation_log else None,
+            Json(meta_info),
+            model_name
+        ))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        logger.info(f"✓ Report saved to DB: {topic}")
+        return True
+
+    except Exception as e:
+        logger.error(f"✗ Failed to save report to DB: {e}")
+        return False
+
+
+def setup_lm_configs(provider: str = "openai") -> STORMWikiLMConfigs:
     """
     LLM 설정을 초기화합니다.
+
+    Args:
+        provider: LLM 공급자 ('openai' 또는 'gemini')
 
     Returns:
         STORMWikiLMConfigs: 설정된 LM 구성 객체
     """
     lm_configs = STORMWikiLMConfigs()
 
-    openai_kwargs = {
-        "api_key": os.getenv("OPENAI_API_KEY"),
-        "temperature": 1.0,
-        "top_p": 0.9,
-    }
+    if provider == "gemini":
+        # Google Gemini 모델 설정
+        gemini_kwargs = {
+            "temperature": 1.0,
+            "top_p": 0.9,
+        }
 
-    # API 타입에 따른 모델 클래스 선택
-    api_type = os.getenv("OPENAI_API_TYPE", "openai")
-    ModelClass = OpenAIModel if api_type == "openai" else AzureOpenAIModel
+        # Gemini 모델명 설정 (2026년 최신 형식: models/ 접두사 없이 사용)
+        gemini_flash_model = "gemini-2.0-flash"
+        gemini_pro_model = "gemini-2.0-flash"
 
-    # 모델명 설정
-    gpt_35_model_name = "gpt-3.5-turbo" if api_type == "openai" else "gpt-35-turbo"
-    gpt_4_model_name = "gpt-4o"
+        # 각 컴포넌트별 LM 설정
+        # - conv_simulator_lm, question_asker_lm: 빠른 모델 (대화 시뮬레이션)
+        # - outline_gen_lm, article_gen_lm, article_polish_lm: 강력한 모델 (콘텐츠 생성)
+        conv_simulator_lm = GoogleModel(
+            model=gemini_flash_model, max_tokens=2048, **gemini_kwargs  # 토큰 수 약간 상향
+        )
+        question_asker_lm = GoogleModel(
+            model=gemini_flash_model, max_tokens=2048, **gemini_kwargs
+        )
+        outline_gen_lm = GoogleModel(
+            model=gemini_pro_model, max_tokens=4096, **gemini_kwargs
+        )
+        article_gen_lm = GoogleModel(
+            model=gemini_pro_model, max_tokens=8192, **gemini_kwargs
+        )
+        article_polish_lm = GoogleModel(
+            model=gemini_pro_model, max_tokens=8192, **gemini_kwargs
+        )
 
-    # Azure 설정 (필요시)
-    if api_type == "azure":
-        openai_kwargs["api_base"] = os.getenv("AZURE_API_BASE")
-        openai_kwargs["api_version"] = os.getenv("AZURE_API_VERSION")
+        logger.info(f"✓ Using Gemini models: {gemini_flash_model} (fast), {gemini_pro_model} (pro)")
 
-    # 각 컴포넌트별 LM 설정
-    # - conv_simulator_lm, question_asker_lm: 저렴한 모델 (대화 시뮬레이션)
-    # - outline_gen_lm, article_gen_lm, article_polish_lm: 강력한 모델 (콘텐츠 생성)
-    conv_simulator_lm = ModelClass(
-        model=gpt_35_model_name, max_tokens=500, **openai_kwargs
-    )
-    question_asker_lm = ModelClass(
-        model=gpt_35_model_name, max_tokens=500, **openai_kwargs
-    )
-    outline_gen_lm = ModelClass(
-        model=gpt_4_model_name, max_tokens=400, **openai_kwargs
-    )
-    article_gen_lm = ModelClass(
-        model=gpt_4_model_name, max_tokens=700, **openai_kwargs
-    )
-    article_polish_lm = ModelClass(
-        model=gpt_4_model_name, max_tokens=4000, **openai_kwargs
-    )
+    else:
+        # OpenAI 모델 설정 (기본값)
+        openai_kwargs = {
+            "api_key": os.getenv("OPENAI_API_KEY"),
+            "temperature": 1.0,
+            "top_p": 0.9,
+        }
+
+        # API 타입에 따른 모델 클래스 선택
+        api_type = os.getenv("OPENAI_API_TYPE", "openai")
+        ModelClass = OpenAIModel if api_type == "openai" else AzureOpenAIModel
+
+        # 모델명 설정
+        gpt_35_model_name = "gpt-3.5-turbo" if api_type == "openai" else "gpt-35-turbo"
+        gpt_4_model_name = "gpt-4o"
+
+        # Azure 설정 (필요시)
+        if api_type == "azure":
+            openai_kwargs["api_base"] = os.getenv("AZURE_API_BASE")
+            openai_kwargs["api_version"] = os.getenv("AZURE_API_VERSION")
+
+        # 각 컴포넌트별 LM 설정
+        # - conv_simulator_lm, question_asker_lm: 저렴한 모델 (대화 시뮬레이션)
+        # - outline_gen_lm, article_gen_lm, article_polish_lm: 강력한 모델 (콘텐츠 생성)
+        conv_simulator_lm = ModelClass(
+            model=gpt_35_model_name, max_tokens=500, **openai_kwargs
+        )
+        question_asker_lm = ModelClass(
+            model=gpt_35_model_name, max_tokens=500, **openai_kwargs
+        )
+        outline_gen_lm = ModelClass(
+            model=gpt_4_model_name, max_tokens=400, **openai_kwargs
+        )
+        article_gen_lm = ModelClass(
+            model=gpt_4_model_name, max_tokens=700, **openai_kwargs
+        )
+        article_polish_lm = ModelClass(
+            model=gpt_4_model_name, max_tokens=4000, **openai_kwargs
+        )
+
+        logger.info(f"✓ Using OpenAI models: {gpt_35_model_name} (fast), {gpt_4_model_name} (pro)")
 
     lm_configs.set_conv_simulator_lm(conv_simulator_lm)
     lm_configs.set_question_asker_lm(question_asker_lm)
@@ -160,7 +338,13 @@ def run_batch_analysis(args):
 
     # LM 설정 초기화
     logger.info("Initializing LM configurations...")
-    lm_configs = setup_lm_configs()
+    lm_configs = setup_lm_configs(args.model_provider)
+
+    # 모델명 결정 (DB 저장용)
+    if args.model_provider == "gemini":
+        current_model_name = "gemini"
+    else:
+        current_model_name = "gpt-4o"
 
     # PostgresRM 초기화 (내부 DB 검색)
     logger.info("Initializing PostgresRM (Internal DB Search)...")
@@ -181,6 +365,7 @@ def run_batch_analysis(args):
 
     logger.info("=" * 60)
     logger.info(f"Starting Enterprise STORM Batch Analysis")
+    logger.info(f"Model provider: {args.model_provider} ({current_model_name})")
     logger.info(f"Total topics to process: {total_topics}")
     logger.info(f"Output directory: {args.output_dir}")
     logger.info("=" * 60)
@@ -220,6 +405,9 @@ def run_batch_analysis(args):
             runner.post_run()
             runner.summary()
 
+            # DB에 결과 저장
+            save_report_to_db(topic, args.output_dir, secrets_path, model_name=current_model_name)
+
             elapsed = datetime.now() - topic_start_time
             logger.info(f"✓ Completed '{topic}' in {elapsed.total_seconds():.1f}s")
             successful += 1
@@ -258,6 +446,15 @@ def main():
         type=str,
         default="./results/enterprise",
         help="결과물 저장 디렉토리 (기본값: ./results/enterprise)",
+    )
+
+    # 모델 공급자 선택
+    parser.add_argument(
+        "--model-provider",
+        type=str,
+        choices=["openai", "gemini"],
+        default="openai",
+        help="사용할 LLM 공급자 선택 (openai 또는 gemini, 기본값: openai)",
     )
 
     # 토픽 설정 (선택적)
