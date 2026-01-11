@@ -20,7 +20,7 @@ Database Schema (Source_Materials):
         - length: integer
 
 Author: Enterprise STORM Team
-Updated: 2026-01-10 - Sliding Window Retrieval & Merged Meta Prompting
+Updated: 2026-01-11 - 통합 아키텍처 (src.common 모듈 사용)
 """
 
 import os
@@ -30,7 +30,17 @@ from typing import List, Dict
 import numpy as np
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from sentence_transformers import SentenceTransformer
+
+# [통합 아키텍처] 공통 모듈 사용
+try:
+    from src.common.db_connection import DBConnectionFactory
+    from src.common.embedding import EmbeddingService
+    from src.common.config import DB_CONFIG
+    _USE_UNIFIED_MODULES = True
+except ImportError:
+    # 폴백: 기존 방식 (독립 실행 시)
+    from sentence_transformers import SentenceTransformer
+    _USE_UNIFIED_MODULES = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -58,10 +68,10 @@ class PostgresConnector:
         """
         PostgresConnector 초기화
 
-        환경변수에서 DB 접속 정보를 로드하고 연결을 설정합니다.
-        sentence_transformers 모델(paraphrase-multilingual-mpnet-base-v2)을 로드합니다.
+        [통합 아키텍처] src.common 모듈 사용 가능 시 통합 DB 연결 및 임베딩 서비스 사용.
+        독립 실행 시 기존 환경변수 방식으로 폴백.
 
-        Required Environment Variables:
+        Required Environment Variables (폴백 시):
             - PG_HOST: PostgreSQL 호스트 주소
             - PG_PORT: PostgreSQL 포트 (기본값: 5432)
             - PG_USER: 데이터베이스 사용자명
@@ -71,50 +81,75 @@ class PostgresConnector:
         Raises:
             RuntimeError: DB 연결 정보가 누락되었거나 연결에 실패한 경우
         """
-        # 환경변수에서 DB 접속 정보 로드
-        self.host = os.environ.get("PG_HOST")
-        self.port = os.environ.get("PG_PORT", "5432")
-        self.user = os.environ.get("PG_USER")
-        self.password = os.environ.get("PG_PASSWORD")
-        self.database = os.environ.get("PG_DATABASE")
+        if _USE_UNIFIED_MODULES:
+            # [통합 아키텍처] 공통 모듈 사용
+            try:
+                factory = DBConnectionFactory()
+                self.conn = factory.create_connection()
+                logger.info(f"Successfully connected via unified DBConnectionFactory")
 
-        # 필수 환경변수 검증
-        missing_vars = []
-        if not self.host:
-            missing_vars.append("PG_HOST")
-        if not self.user:
-            missing_vars.append("PG_USER")
-        if not self.password:
-            missing_vars.append("PG_PASSWORD")
-        if not self.database:
-            missing_vars.append("PG_DATABASE")
+                # [안전장치] 차원 검증 먼저 실행
+                try:
+                    from src.common.config import validate_embedding_dimension_compatibility
+                    validate_embedding_dimension_compatibility()
+                except Exception as e:
+                    logger.error(f"❌ Dimension validation failed: {e}")
+                    raise
 
-        if missing_vars:
-            raise RuntimeError(
-                f"Missing required environment variables: {', '.join(missing_vars)}. "
-                "Please set them in secrets.toml or as environment variables."
-            )
+                # 통합 임베딩 서비스 사용
+                self._embedding_service = EmbeddingService(validate_dimension=False)  # 이미 검증했으므로 skip
+                self.model = None  # 레거시 호환
+                logger.info(f"Using unified EmbeddingService (provider: {self._embedding_service.provider})")
+            except Exception as e:
+                raise RuntimeError(f"Failed to initialize via unified modules: {e}")
+        else:
+            # [폴백] 기존 환경변수 방식
+            self._embedding_service = None
 
-        # DB 연결 설정
-        try:
-            self.conn = psycopg2.connect(
-                host=self.host,
-                port=self.port,
-                user=self.user,
-                password=self.password,
-                database=self.database
-            )
-            logger.info(f"Successfully connected to PostgreSQL database: {self.database}")
-        except psycopg2.Error as e:
-            raise RuntimeError(f"Failed to connect to PostgreSQL: {e}")
+            # 환경변수에서 DB 접속 정보 로드
+            self.host = os.environ.get("PG_HOST")
+            self.port = os.environ.get("PG_PORT", "5432")
+            self.user = os.environ.get("PG_USER")
+            self.password = os.environ.get("PG_PASSWORD")
+            self.database = os.environ.get("PG_DATABASE")
 
-        # 임베딩 모델 로드 (paraphrase-multilingual-mpnet-base-v2)
-        # 768차원 벡터 생성, 다국어 지원
-        try:
-            self.model = SentenceTransformer('paraphrase-multilingual-mpnet-base-v2')
-            logger.info("Successfully loaded SentenceTransformer model")
-        except Exception as e:
-            raise RuntimeError(f"Failed to load SentenceTransformer model: {e}")
+            # 필수 환경변수 검증
+            missing_vars = []
+            if not self.host:
+                missing_vars.append("PG_HOST")
+            if not self.user:
+                missing_vars.append("PG_USER")
+            if not self.password:
+                missing_vars.append("PG_PASSWORD")
+            if not self.database:
+                missing_vars.append("PG_DATABASE")
+
+            if missing_vars:
+                raise RuntimeError(
+                    f"Missing required environment variables: {', '.join(missing_vars)}. "
+                    "Please set them in secrets.toml or as environment variables."
+                )
+
+            # DB 연결 설정
+            try:
+                self.conn = psycopg2.connect(
+                    host=self.host,
+                    port=self.port,
+                    user=self.user,
+                    password=self.password,
+                    database=self.database
+                )
+                logger.info(f"Successfully connected to PostgreSQL database: {self.database}")
+            except psycopg2.Error as e:
+                raise RuntimeError(f"Failed to connect to PostgreSQL: {e}")
+
+            # 임베딩 모델 로드 (폴백)
+            try:
+                from sentence_transformers import SentenceTransformer
+                self.model = SentenceTransformer('paraphrase-multilingual-mpnet-base-v2')
+                logger.info("Successfully loaded SentenceTransformer model (fallback mode)")
+            except Exception as e:
+                raise RuntimeError(f"Failed to load SentenceTransformer model: {e}")
 
     def _embed_query(self, query: str) -> np.ndarray:
         """
@@ -124,10 +159,16 @@ class PostgresConnector:
             query: 검색 쿼리 문자열
 
         Returns:
-            768차원 numpy 배열
+            임베딩 벡터 (numpy 배열)
         """
-        embedding = self.model.encode(query, convert_to_numpy=True)
-        return embedding
+        if self._embedding_service is not None:
+            # [통합 아키텍처] 공통 임베딩 서비스 사용
+            embedding = self._embedding_service.embed_text(query)
+            return np.array(embedding)
+        else:
+            # [폴백] SentenceTransformer 직접 사용
+            embedding = self.model.encode(query, convert_to_numpy=True)
+            return embedding
 
     def _fetch_window_context(
             self,
