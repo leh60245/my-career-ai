@@ -142,10 +142,10 @@ class ContextLookbackEmbeddingWorker:
     # ==================== 데이터 조회 ====================
 
     def fetch_pending_materials(
-        self,
-        db: DBManager,
-        limit: Optional[int] = None,
-        force: bool = False
+            self,
+            db: DBManager,
+            limit: Optional[int] = None,
+            force: bool = False
     ) -> List[MaterialRow]:
         """
         임베딩이 없는(또는 force=True면 전체) Source_Materials 조회
@@ -163,22 +163,24 @@ class ContextLookbackEmbeddingWorker:
             - report_id, sequence_order 기준으로도 정렬하여 문서 내 순서 유지
         """
         if force:
-            # 전체 데이터 조회 (재처리)
+            # 전체 데이터 조회 (재처리) - 단, noise_merged는 제외
             sql = """
-                SELECT id, report_id, chunk_type, section_path, 
-                       sequence_order, raw_content
-                FROM "Source_Materials"
-                ORDER BY report_id, sequence_order, id
-            """
+                    SELECT id, report_id, chunk_type, section_path, 
+                           sequence_order, raw_content
+                    FROM "Source_Materials"
+                    WHERE chunk_type != 'noise_merged'
+                    ORDER BY report_id, sequence_order, id
+                    """
         else:
-            # 임베딩이 없는 데이터만 조회
+            # 임베딩이 없는 데이터만 조회 - 단, noise_merged는 제외
             sql = """
-                SELECT id, report_id, chunk_type, section_path, 
-                       sequence_order, raw_content
-                FROM "Source_Materials"
-                WHERE embedding IS NULL
-                ORDER BY report_id, sequence_order, id
-            """
+                        SELECT id, report_id, chunk_type, section_path, 
+                               sequence_order, raw_content
+                        FROM "Source_Materials"
+                        WHERE embedding IS NULL
+                          AND chunk_type != 'noise_merged'
+                        ORDER BY report_id, sequence_order, id
+                    """
 
         if limit is not None:
             sql = sql.rstrip() + f" LIMIT {limit}"
@@ -241,9 +243,9 @@ class ContextLookbackEmbeddingWorker:
     # 실제 처리는 process_batch에서 _build_normal_embedding_text를 사용합니다.
 
     def _build_normal_embedding_text(
-        self,
-        current: MaterialRow,
-        previous: Optional[MaterialRow]
+            self,
+            current: MaterialRow,
+            previous: Optional[MaterialRow]
     ) -> Tuple[str, bool]:
         """
         일반 블록(노이즈가 아닌)의 임베딩 텍스트를 구성
@@ -260,10 +262,10 @@ class ContextLookbackEmbeddingWorker:
 
         # Case A: 표(table)에 직전 텍스트 문맥 주입
         if (
-            current.chunk_type == 'table'
-            and previous is not None
-            and previous.chunk_type == 'text'
-            and previous.section_path == current.section_path
+                current.chunk_type == 'table'
+                and previous is not None
+                and previous.chunk_type == 'text'
+                and previous.section_path == current.section_path
         ):
             context_text = previous.raw_content or ""
             max_context_len = 500
@@ -285,12 +287,12 @@ class ContextLookbackEmbeddingWorker:
     # ==================== 임베딩 생성 및 DB 업데이트 ====================
 
     def update_embedding(
-        self,
-        db: DBManager,
-        material_id: int,
-        embedding: List[float],
-        has_context: bool = False,
-        has_merged_meta: bool = False
+            self,
+            db: DBManager,
+            material_id: int,
+            embedding: List[float],
+            has_context: bool = False,
+            has_merged_meta: bool = False
     ):
         """
         Source_Materials 테이블에 임베딩 업데이트
@@ -363,10 +365,10 @@ class ContextLookbackEmbeddingWorker:
         db.cursor.execute(sql, (current_id,))
 
     def process_batch(
-        self,
-        db: DBManager,
-        batch: List[MaterialRow],
-        previous_cache: Dict[int, MaterialRow]
+            self,
+            db: DBManager,
+            batch: List[MaterialRow],
+            previous_cache: Dict[int, MaterialRow]
     ) -> Dict[int, MaterialRow]:
         """
         배치 단위로 임베딩 생성 및 업데이트
@@ -400,9 +402,9 @@ class ContextLookbackEmbeddingWorker:
 
             # --- 노이즈 테이블 감지 및 병합 처리 ---
             if (
-                current.chunk_type == 'table'
-                and self._is_noise_table(current.raw_content)
-                and previous is not None
+                    current.chunk_type == 'table'
+                    and self._is_noise_table(current.raw_content)
+                    and previous is not None
             ):
                 # 1. Previous에 Current 내용 Append (DB 업데이트)
                 self._merge_noise_to_previous(db, previous.id, current.raw_content)
@@ -475,9 +477,9 @@ class ContextLookbackEmbeddingWorker:
     # ==================== 메인 실행 ====================
 
     def run(
-        self,
-        limit: Optional[int] = None,
-        force: bool = False
+            self,
+            limit: Optional[int] = None,
+            force: bool = False
     ):
         """
         Context Look-back 임베딩 파이프라인 실행
@@ -616,4 +618,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

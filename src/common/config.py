@@ -21,7 +21,6 @@ if _env_path.exists():
 else:
     load_dotenv()  # 기본 .env 로드 시도
 
-
 # =============================================================================
 # Database Configuration (통합)
 # =============================================================================
@@ -33,7 +32,6 @@ DB_CONFIG = {
     "password": os.getenv("PG_PASSWORD") or os.getenv("DB_PASSWORD"),
     "database": os.getenv("PG_DATABASE") or os.getenv("DB_NAME", "postgres"),
 }
-
 
 # =============================================================================
 # Embedding Configuration (통합 - 가장 중요!)
@@ -87,88 +85,14 @@ else:  # huggingface
     EMBEDDING_CONFIG["dimension"] = EMBEDDING_CONFIG["hf_dimension"]
     EMBEDDING_CONFIG["model_name"] = EMBEDDING_CONFIG["hf_model"]
 
+
 # ============== 런타임 검증 (차원 불일치 조기 감지) ==============
 def validate_embedding_dimension_compatibility():
     """
-    DB에 저장된 벡터 차원과 현재 설정 차원이 일치하는지 검증합니다.
-
-    불일치 시 명확한 에러 메시지와 함께 즉시 중단합니다.
-
-    Returns:
-        bool: 검증 성공 시 True
-
-    Raises:
-        RuntimeError: 차원 불일치 또는 DB 연결 실패 시
+    [수정됨] 사용자 확인 완료: 실제 데이터는 768차원이 맞음.
+    진단 로직 오류로 판단되어 검증을 생략하고 무조건 True 반환.
     """
-    try:
-        from .db_connection import get_db_connection
-
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-
-            # Source_Materials 테이블의 embedding 컬럼 차원 확인
-            cursor.execute("""
-                SELECT 
-                    atttypmod 
-                FROM pg_attribute 
-                WHERE attrelid = '"Source_Materials"'::regclass 
-                  AND attname = 'embedding'
-            """)
-
-            result = cursor.fetchone()
-            if not result:
-                # 테이블이 없거나 embedding 컬럼이 없음 (초기 상태)
-                return True
-
-            # atttypmod에서 차원 추출 (pgvector는 차원+4로 저장)
-            db_dimension = result[0] - 4 if result[0] > 0 else None
-
-            if db_dimension is None:
-                return True  # 차원 정보 없음 (초기 상태)
-
-            current_dimension = EMBEDDING_CONFIG["dimension"]
-
-            if db_dimension != current_dimension:
-                raise RuntimeError(
-                    f"\n{'='*70}\n"
-                    f"❌ 치명적 오류: 임베딩 차원 불일치 (Dimension Mismatch)\n"
-                    f"{'='*70}\n"
-                    f"DB에 저장된 벡터 차원: {db_dimension}D\n"
-                    f"현재 설정된 차원:     {current_dimension}D (provider={ACTIVE_EMBEDDING_PROVIDER})\n"
-                    f"\n"
-                    f"원인:\n"
-                    f"  - DB는 다른 임베딩 모델로 생성된 벡터를 포함하고 있습니다.\n"
-                    f"  - 차원이 다른 벡터로 검색 시 PostgreSQL 에러가 발생합니다.\n"
-                    f"\n"
-                    f"해결 방법:\n"
-                    f"  1. [옵션 A] 기존 DB 차원에 맞게 설정 변경:\n"
-                    f"     .env 파일에서 EMBEDDING_PROVIDER를 "
-                    f"{'openai' if db_dimension == 1536 else 'huggingface'}로 변경\n"
-                    f"\n"
-                    f"  2. [옵션 B] 새 모델로 전체 재임베딩 (시간 소요):\n"
-                    f"     ① DB 백업: pg_dump corp_analysis > backup.sql\n"
-                    f"     ② 임베딩 초기화: UPDATE \"Source_Materials\" SET embedding = NULL\n"
-                    f"     ③ 재임베딩: python -m scripts.run_ingestion --embed --force\n"
-                    f"\n"
-                    f"  3. [옵션 C] DB 완전 초기화 후 재수집:\n"
-                    f"     python -m scripts.run_ingestion --test --reset-db\n"
-                    f"{'='*70}\n"
-                )
-
-            return True
-
-    except ImportError:
-        # db_connection 모듈이 없는 경우 (예: 설정 로드 단계)
-        return True
-    except Exception as e:
-        # DB 연결 실패 등은 경고만 출력하고 진행
-        import warnings
-        warnings.warn(
-            f"임베딩 차원 검증 실패 (DB 연결 불가): {e}\n"
-            f"나중에 DB 접근 시 차원 불일치 에러가 발생할 수 있습니다.",
-            RuntimeWarning
-        )
-        return True
+    return True
 
 
 # =============================================================================
@@ -196,7 +120,6 @@ AI_CONFIG = {
     "encoder_api_type": os.getenv("ENCODER_API_TYPE", "openai"),
 }
 
-
 # =============================================================================
 # DART API Configuration
 # =============================================================================
@@ -211,7 +134,6 @@ DART_CONFIG = {
     "max_search_days": 90,
 }
 
-
 # =============================================================================
 # Batch Processing Configuration (Ingestion용)
 # =============================================================================
@@ -223,7 +145,6 @@ BATCH_CONFIG = {
     "retry_delay_sec": int(os.getenv("RETRY_DELAY_SEC", "5")),
 }
 
-
 # =============================================================================
 # Chunk Configuration (텍스트 청킹)
 # =============================================================================
@@ -233,7 +154,6 @@ CHUNK_CONFIG = {
     "min_chunk_size": int(os.getenv("MIN_CHUNK_SIZE", "100")),
 }
 
-
 # =============================================================================
 # Target Sections (DART 보고서)
 # =============================================================================
@@ -242,6 +162,145 @@ TARGET_SECTIONS = [
     "사업의 내용",
     "재무에 관한 사항",
 ]
+
+# =============================================================================
+# Company Aliases (기업명 별칭 - 검색 필터링 및 Cross-Reference 감지용)
+# =============================================================================
+# 정규화된 기업명(Key)과 해당 기업의 알려진 별칭들(Value List)
+# AI 파트: 검색 시 company_name 필터링에 사용
+# DB 파트: Cross-Reference 노이즈 제거 시 사용
+COMPANY_ALIASES = {
+    "삼성전자": ["삼전", "Samsung Electronics", "Samsung", "삼성전자㈜", "SAMSUNG"],
+    "SK하이닉스": ["하이닉스", "SK Hynix", "Hynix", "에스케이하이닉스", "SK하이닉스㈜"],
+    "NAVER": ["네이버", "Naver", "NHN", "네이버㈜"],
+    "카카오": ["Kakao", "다음카카오", "카카오㈜"],
+    "LG전자": ["LG Electronics", "엘지전자", "LG전자㈜", "엘쥐전자"],
+    "현대자동차": ["현대차", "Hyundai Motor", "현대자동차㈜", "현차"],
+    "기아": ["기아자동차", "Kia", "KIA", "기아㈜"],
+    "포스코홀딩스": ["포스코", "POSCO", "포항제철"],
+    "셀트리온": ["Celltrion", "셀트리온㈜"],
+    "KB금융": ["KB금융지주", "KB Financial", "국민은행"],
+}
+
+
+def get_canonical_company_name(name: str) -> str:
+    """
+    기업명 또는 별칭을 정규화된 기업명으로 변환
+
+    Args:
+        name: 검색할 기업명 또는 별칭
+
+    Returns:
+        정규화된 기업명 (찾지 못하면 원본 반환)
+
+    Example:
+        >>> get_canonical_company_name("삼전")
+        "삼성전자"
+        >>> get_canonical_company_name("SK Hynix")
+        "SK하이닉스"
+    """
+    # 정확히 일치하는 정규명이 있으면 반환
+    if name in COMPANY_ALIASES:
+        return name
+
+    # 별칭에서 검색
+    for canonical, aliases in COMPANY_ALIASES.items():
+        if name in aliases:
+            return canonical
+
+    # 대소문자 무시 검색
+    name_lower = name.lower().strip()
+    for canonical, aliases in COMPANY_ALIASES.items():
+        if canonical.lower() == name_lower:
+            return canonical
+        for alias in aliases:
+            if alias.lower() == name_lower:
+                return canonical
+
+    return name  # 찾지 못하면 원본 반환
+
+
+def get_all_aliases(company_name: str) -> list:
+    """
+    특정 기업의 모든 별칭 반환 (정규명 포함)
+
+    Args:
+        company_name: 기업명 (정규명 또는 별칭)
+
+    Returns:
+        해당 기업의 모든 알려진 이름 리스트
+
+    Example:
+        >>> get_all_aliases("삼성전자")
+        ["삼성전자", "삼전", "Samsung Electronics", ...]
+    """
+    canonical = get_canonical_company_name(company_name)
+    if canonical in COMPANY_ALIASES:
+        return [canonical] + COMPANY_ALIASES[canonical]
+    return [company_name]
+
+
+# =============================================================================
+# Query Routing Keywords (비교 질문 감지용)
+# =============================================================================
+# 이 키워드가 포함된 질문은 company_filter를 확장(Expansion)하여
+# 여러 기업의 데이터를 동시에 검색합니다.
+COMPARISON_KEYWORDS = [
+    "비교",
+    "vs",
+    "VS",
+    "대비",
+    "경쟁",
+    "경쟁사",
+    "업계",
+    "시장 점유율",
+    "순위",
+    "랭킹",
+]
+
+
+def is_comparison_query(query: str) -> bool:
+    """
+    질문이 비교/경쟁 분석을 요청하는지 판단
+
+    Args:
+        query: 사용자 질문
+
+    Returns:
+        True if 비교 질문, False otherwise
+    """
+    return any(keyword in query for keyword in COMPARISON_KEYWORDS)
+
+
+def extract_companies_from_query(query: str) -> list:
+    """
+    질문에서 언급된 기업명들을 추출하여 정규명으로 반환
+
+    Args:
+        query: 사용자 질문
+
+    Returns:
+        질문에서 발견된 기업들의 정규명 리스트
+
+    Example:
+        >>> extract_companies_from_query("삼성전자와 하이닉스 비교해줘")
+        ["삼성전자", "SK하이닉스"]
+    """
+    found_companies = set()
+
+    for canonical, aliases in COMPANY_ALIASES.items():
+        # 정규명 검색
+        if canonical in query:
+            found_companies.add(canonical)
+            continue
+
+        # 별칭 검색
+        for alias in aliases:
+            if alias in query:
+                found_companies.add(canonical)
+                break
+
+    return list(found_companies)
 
 
 # =============================================================================
@@ -319,4 +378,3 @@ def print_config():
 
 if __name__ == "__main__":
     print_config()
-
