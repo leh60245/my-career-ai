@@ -35,12 +35,32 @@ from psycopg2.extras import RealDictCursor
 try:
     from src.common.db_connection import DBConnectionFactory
     from src.common.embedding import EmbeddingService
-    from src.common.config import DB_CONFIG
+    from src.common.config import (
+        DB_CONFIG,
+        COMPANY_ALIASES,
+        get_canonical_company_name,
+        get_all_aliases,
+    )
     _USE_UNIFIED_MODULES = True
 except ImportError:
     # 폴백: 기존 방식 (독립 실행 시)
     from sentence_transformers import SentenceTransformer
     _USE_UNIFIED_MODULES = False
+    # 폴백용 기본 COMPANY_ALIASES
+    COMPANY_ALIASES = {
+        "삼성전자": ["삼전", "Samsung Electronics", "Samsung", "삼성전자㈜", "SAMSUNG"],
+        "SK하이닉스": ["하이닉스", "SK Hynix", "Hynix", "에스케이하이닉스", "SK하이닉스㈜"],
+    }
+    def get_canonical_company_name(name: str) -> str:
+        for canonical, aliases in COMPANY_ALIASES.items():
+            if name == canonical or name in aliases:
+                return canonical
+        return name
+    def get_all_aliases(company_name: str) -> list:
+        canonical = get_canonical_company_name(company_name)
+        if canonical in COMPANY_ALIASES:
+            return [canonical] + COMPANY_ALIASES[canonical]
+        return [company_name]
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -151,6 +171,254 @@ class PostgresConnector:
             except Exception as e:
                 raise RuntimeError(f"Failed to load SentenceTransformer model: {e}")
 
+    def _extract_target_entities(self, query: str) -> List[str]:
+        """
+        쿼리에서 타겟 기업명(Entity) 추출
+
+        COMPANY_ALIASES를 기반으로 쿼리 내 기업명을 식별하고,
+        해당 기업의 모든 별칭을 반환합니다.
+
+        Args:
+            query: 검색 쿼리 문자열
+
+        Returns:
+            식별된 기업의 모든 알려진 이름 리스트 (별칭 포함)
+            예: ["SK하이닉스", "하이닉스", "SK Hynix", ...]
+
+        Example:
+            >>> self._extract_target_entities("SK하이닉스 매출 현황")
+            ["SK하이닉스", "하이닉스", "SK Hynix", ...]
+        """
+        target_keywords = []
+
+        # 모든 기업의 정규명과 별칭을 순회하며 쿼리에 포함된 기업 찾기
+        for canonical, aliases in COMPANY_ALIASES.items():
+            all_names = [canonical] + aliases
+
+            for name in all_names:
+                if name.lower() in query.lower():
+                    # 매칭된 기업의 모든 별칭 반환
+                    target_keywords = get_all_aliases(canonical)
+                    logger.debug(f"[Entity Extraction] Found entity '{canonical}' in query, aliases: {target_keywords}")
+                    return target_keywords
+
+        logger.debug(f"[Entity Extraction] No known company entity found in query: {query}")
+        return target_keywords
+
+    def _classify_query_intent(self, query: str) -> str:
+        """
+        질문 의도 분류: Factoid vs Analytical
+
+        Rule-based 키워드 매칭을 사용하여 질문을 분류합니다.
+
+        Args:
+            query: 검색 쿼리 문자열
+
+        Returns:
+            "factoid" | "analytical"
+
+        Classification Logic:
+        - Factoid: 단순 사실 확인 (설립일, 주소, 대표, 전화번호 등)
+        - Analytical: 비교/분석 정보 (점유율, 순위, 전망, SWOT, 경쟁 등)
+
+        Example:
+            >>> self._classify_query_intent("SK하이닉스 설립일")
+            "factoid"
+            >>> self._classify_query_intent("삼성전자 대비 시장 점유율")
+            "analytical"
+        """
+        query_lower = query.lower()
+
+        # Analytical Keywords (우선 검사 - 더 구체적)
+        analytical_keywords = [
+            # 비교/경쟁
+            "비교", "대비", "vs", "경쟁", "경쟁사",
+            # 분석
+            "분석", "swot", "전망", "추세", "동향", "전략",
+            # 시장/순위
+            "점유율", "순위", "랭킹", "위치", "입지",
+            # 재무 분석
+            "성장률", "수익성", "안정성", "효율성",
+            # 강점/약점
+            "강점", "약점", "기회", "위협",
+        ]
+
+        for keyword in analytical_keywords:
+            if keyword in query_lower:
+                logger.debug(f"[Intent] Classified as ANALYTICAL (keyword: '{keyword}')")
+                return "analytical"
+
+        # Factoid Keywords
+        factoid_keywords = [
+            # 기본 정보
+            "설립", "설립일", "창립", "주소", "위치", "본사",
+            # 인물
+            "대표", "대표이사", "ceo", "임원", "이사",
+            # 연락처
+            "전화", "전화번호", "팩스", "이메일", "연락처",
+            # 주주/지분
+            "주주", "지분", "소유", "최대주주",
+            # 단순 개요
+            "개요", "소개", "회사명", "법적", "상호",
+        ]
+
+        for keyword in factoid_keywords:
+            if keyword in query_lower:
+                logger.debug(f"[Intent] Classified as FACTOID (keyword: '{keyword}')")
+                return "factoid"
+
+        # 기본값: Analytical (보수적 접근 - 정보 손실 방지)
+        logger.debug(f"[Intent] No specific keywords found, defaulting to ANALYTICAL")
+        return "analytical"
+
+    def _rerank_by_entity_match(
+        self,
+        query: str,
+        results: List[Dict],
+        boost_multiplier: float = 1.3,
+        penalty_multiplier: float = 0.5,
+        drop_unmatched_tables: bool = True,
+        enable_dual_filter: bool = True
+    ) -> List[Dict]:
+        """
+        Entity 매칭 기반 결과 리랭킹 + Dual Filtering
+
+        [FEAT-002 추가] 질문 의도(Factoid vs Analytical)에 따라 필터링 강도 조절
+        - Factoid: Strict Filter (Entity 불일치 시 DROP)
+        - Analytical: Relaxed Filter (Entity 불일치 시 Penalty만)
+
+        핵심 로직:
+        - 매칭 시: 점수 × boost_multiplier (가산점)
+        - 불일치 + Factoid: DROP (오답 방지)
+        - 불일치 + Analytical: 점수 × penalty_multiplier (정보 보존)
+
+        Args:
+            query: 원본 검색 쿼리
+            results: 검색 결과 리스트 (STORM 포맷)
+            boost_multiplier: 매칭 시 점수 배율 (기본값: 1.3)
+            penalty_multiplier: 불일치 시 점수 배율 (기본값: 0.5)
+            drop_unmatched_tables: Table 타입 불일치 청크 드롭 여부 (기본값: True)
+            enable_dual_filter: Dual Filtering 활성화 여부 (기본값: True)
+
+        Returns:
+            스코어가 조정된 결과 리스트 (정렬됨)
+        """
+        # 1. 쿼리에서 타겟 Entity 추출
+        target_keywords = self._extract_target_entities(query)
+
+        if not target_keywords:
+            logger.info("[Rerank] No target entity found in query - skipping reranking")
+            return results
+
+        # 2. 질문 의도 분류 (Dual Filter)
+        query_intent = "analytical"  # 기본값
+        if enable_dual_filter:
+            query_intent = self._classify_query_intent(query)
+            logger.info(f"[Dual Filter] Query intent: {query_intent.upper()}")
+
+        logger.info(f"[Rerank] Target entities for matching: {target_keywords[:3]}...")
+
+        reranked_results = []
+        dropped_count = 0
+
+        for doc in results:
+            # 3. 메타데이터 결합 (title + content의 일부)
+            doc_title = doc.get('title', '')
+            doc_content = doc.get('content', '')[:500]
+            doc_meta = f"{doc_title} {doc_content}".lower()
+
+            # 4. 매칭 여부 확인 (대소문자 무시)
+            is_matched = any(keyword.lower() in doc_meta for keyword in target_keywords)
+
+            # 5. chunk_type 확인
+            is_table_chunk = "[표 데이터]" in doc.get('content', '')
+
+            # 6. 스코어 조정 (Dual Filtering 적용)
+            original_score = doc.get('score', 0)
+
+            if is_matched:
+                # ✅ MATCH: 가산점
+                doc['score'] = original_score * boost_multiplier
+                doc['_entity_match'] = True
+                logger.debug(f"[Rerank] MATCH: {doc.get('url', 'unknown')[:40]}... | "
+                           f"Score: {original_score:.4f} → {doc['score']:.4f}")
+                reranked_results.append(doc)
+
+            else:
+                # ❌ NO MATCH: 의도에 따라 처리
+
+                # Case 1: Factoid 질문 → Strict Filter (DROP)
+                if query_intent == "factoid":
+                    dropped_count += 1
+                    logger.debug(f"[Rerank] DROP (factoid + unmatched): {doc.get('url', 'unknown')[:40]}...")
+                    continue
+
+                # Case 2: Analytical 질문 → Relaxed Filter
+                # Table 청크는 여전히 드롭, Text는 페널티만
+                if is_table_chunk and drop_unmatched_tables:
+                    dropped_count += 1
+                    logger.debug(f"[Rerank] DROP (analytical + unmatched table): {doc.get('url', 'unknown')[:40]}...")
+                    continue
+
+                # Text 청크는 페널티 부여 후 유지
+                doc['score'] = original_score * penalty_multiplier
+                doc['_entity_match'] = False
+                logger.debug(f"[Rerank] PENALTY (analytical + unmatched text): {doc.get('url', 'unknown')[:40]}... | "
+                           f"Score: {original_score:.4f} → {doc['score']:.4f}")
+                reranked_results.append(doc)
+
+        # 7. 점수순 재정렬
+        reranked_results.sort(key=lambda x: x.get('score', 0), reverse=True)
+
+        logger.info(f"[Rerank] Completed: {len(reranked_results)} kept, {dropped_count} dropped (intent: {query_intent})")
+
+        return reranked_results
+
+    def _apply_source_tagging(self, results: List[Dict], enable: bool = True) -> List[Dict]:
+        """
+        Source Tagging: 청크 content에 출처 헤더 물리적 주입
+
+        [FEAT-002] LLM이 정보의 주체를 명확히 구분할 수 있도록
+        각 청크의 맨 앞에 [[출처: 회사명]] 태그를 삽입합니다.
+
+        Args:
+            results: 검색 결과 리스트
+            enable: Source Tagging 활성화 여부 (기본값: True)
+
+        Returns:
+            출처 헤더가 추가된 결과 리스트
+
+        Example:
+            Before: "당사는 1949년에 설립되었습니다..."
+            After:  "[[출처: SK하이닉스 사업보고서]]\n당사는 1949년에 설립되었습니다..."
+        """
+        if not enable:
+            return results
+
+        tagged_results = []
+        for doc in results:
+            # 메타데이터에서 출처 정보 추출
+            company_name = doc.get('_company_name', 'Unknown Company')
+            report_id = doc.get('_report_id', 'N/A')
+
+            # 출처 헤더 생성
+            source_tag = f"[[출처: {company_name} 사업보고서 (Report ID: {report_id})]]"
+
+            # content 맨 앞에 출처 헤더 주입
+            original_content = doc.get('content', '')
+            doc['content'] = f"{source_tag}\n\n{original_content}"
+
+            # 내부 메타데이터는 제거 (LLM에게 전달 불필요)
+            doc.pop('_company_name', None)
+            doc.pop('_report_id', None)
+
+            tagged_results.append(doc)
+
+            logger.debug(f"[Source Tag] Applied to {doc.get('url', 'unknown')[:40]}... | Company: {company_name}")
+
+        logger.info(f"[Source Tag] Applied source tags to {len(tagged_results)} chunks")
+        return tagged_results
+
     def _embed_query(self, query: str) -> np.ndarray:
         """
         쿼리 문자열을 벡터로 변환
@@ -246,12 +514,24 @@ class PostgresConnector:
 
         return context_map
 
-    def search(self, query: str, top_k: int = 5, window_size: int = 1) -> List[Dict]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        window_size: int = 1,
+        company_filter: str = None,
+        company_filter_list: List[str] = None
+    ) -> List[Dict]:
         """
-        벡터 유사도 검색 수행
+        벡터 유사도 검색 수행 (기업명 필터링 지원)
 
         입력된 쿼리를 벡터화하여 PostgreSQL의 Source_Materials 테이블에서
         가장 유사한 문서들을 검색합니다.
+
+        기업명 필터링:
+        - company_filter: 단일 기업명 필터 (기본 모드)
+        - company_filter_list: 복수 기업명 필터 (비교 분석 모드)
+        - 둘 다 None이면 전체 검색 (필터 없음)
 
         chunk_type이 'table'인 경우 Sliding Window Context를 적용하여
         앞뒤 인접 청크를 함께 가져와 하나의 Context Block으로 구성합니다.
@@ -263,6 +543,8 @@ class PostgresConnector:
             query: 검색 쿼리 문자열
             top_k: 반환할 최대 결과 수 (기본값: 5)
             window_size: Table 청크의 앞뒤로 가져올 인접 청크 수 (기본값: 1)
+            company_filter: 단일 기업명 필터 (metadata->>'company_name' = ?)
+            company_filter_list: 복수 기업명 필터 (metadata->>'company_name' IN (?))
 
         Returns:
             STORM 호환 포맷의 검색 결과 리스트
@@ -288,12 +570,33 @@ class PostgresConnector:
 
         results = []
 
+        # 기업명 필터 조건 생성
+        company_condition = ""
+        query_params = [embedding_str]
+
+        if company_filter_list and len(company_filter_list) > 0:
+            # 복수 기업 필터 (비교 분석 모드)
+            placeholders = ", ".join(["%s"] * len(company_filter_list))
+            company_condition = f"AND metadata->>'company_name' IN ({placeholders})"
+            query_params.extend(company_filter_list)
+            logger.info(f"[Filter] Searching with company_filter_list: {company_filter_list}")
+        elif company_filter:
+            # 단일 기업 필터 (기본 모드)
+            company_condition = "AND metadata->>'company_name' = %s"
+            query_params.append(company_filter)
+            logger.info(f"[Filter] Searching with company_filter: {company_filter}")
+        else:
+            logger.info("[Filter] No company filter applied - searching all documents")
+
+        query_params.append(top_k)
+
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # 벡터 유사도 검색 SQL 실행
                 # pgvector의 <=> 연산자: 코사인 거리 (0에 가까울수록 유사)
                 # chunk_type이 'noise_merged'인 청크는 검색에서 제외
-                cur.execute("""
+                # company_condition: 기업명 필터 (동적으로 추가)
+                sql = f"""
                     SELECT 
                         id,
                         raw_content, 
@@ -307,9 +610,12 @@ class PostgresConnector:
                         (embedding <=> %s::vector) as distance
                     FROM "Source_Materials"
                     WHERE chunk_type != 'noise_merged'
+                    {company_condition}
                     ORDER BY distance ASC
                     LIMIT %s
-                """, (embedding_str, top_k))
+                """
+
+                cur.execute(sql, query_params)
 
                 rows = cur.fetchall()
 
@@ -369,15 +675,42 @@ class PostgresConnector:
                     # 형식: dart_report_{report_id}_chunk_{id}
                     unique_url = f"dart_report_{row['report_id']}_chunk_{row['id']}"
 
+                    # [FEAT-002] Source Tagging을 위한 메타데이터 추가
+                    chunk_metadata = row.get('metadata', {})
+                    company_name = chunk_metadata.get('company_name', 'Unknown Company')
+                    report_id = row['report_id']
+
                     results.append({
                         "content": content,
                         "title": row['section_path'],
                         "url": unique_url,
                         "score": score,
-                        "has_merged_meta": has_merged
+                        "has_merged_meta": has_merged,
+                        # Source Tagging용 메타데이터
+                        "_company_name": company_name,
+                        "_report_id": report_id,
                     })
 
                 logger.info(f"Found {len(results)} results for query: {query}")
+
+                # [FEAT-001] Entity Bias 방지: Entity 매칭 기반 리랭킹 + Dual Filtering
+                # - Factoid 질문: Entity 불일치 시 DROP (Strict Filter)
+                # - Analytical 질문: Entity 불일치 시 Penalty (Relaxed Filter)
+                results = self._rerank_by_entity_match(
+                    query=query,
+                    results=results,
+                    boost_multiplier=1.3,
+                    penalty_multiplier=0.5,
+                    drop_unmatched_tables=True,
+                    enable_dual_filter=True  # [FEAT-002] Dual Filtering 활성화
+                )
+
+                # [FEAT-002] Source Tagging: 청크에 출처 헤더 물리적 주입
+                # LLM이 정보의 출처를 명확히 인식하도록 [[출처: 회사명]] 태그 추가
+                results = self._apply_source_tagging(
+                    results=results,
+                    enable=True  # Source Tagging 활성화
+                )
 
                 return results
 

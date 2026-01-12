@@ -1247,19 +1247,29 @@ class PostgresRM(dspy.Retrieve):
 
     DEV_GUIDELINES.md의 "Internal Data First" 철학을 따릅니다.
 
+    기업명 필터링 (Cross-Reference 노이즈 방지):
+    - company_filter: 기본 검색 시 특정 기업 문서만 검색 (Default)
+    - 비교 질문 감지 시: company_filter_list로 확장 (Expansion)
+
     Attributes:
         connector: PostgresConnector 인스턴스
         k: 검색할 최대 결과 수
         min_score: 최소 유사도 임계값 (이 값보다 낮으면 경고 로그)
+        company_filter: 기본 기업명 필터 (None이면 전체 검색)
         usage: 검색 호출 횟수 추적
 
     Example:
-        >>> rm = PostgresRM(k=5, min_score=0.5)
-        >>> result = rm.forward("삼성전자 재무 현황")
-        >>> print(result.passages)
+        >>> rm = PostgresRM(k=5, min_score=0.5, company_filter="삼성전자")
+        >>> result = rm.forward("재무 현황")  # 삼성전자 문서만 검색
+        >>> result = rm.forward("삼성전자와 SK하이닉스 비교")  # 둘 다 검색
     """
 
-    def __init__(self, k: int = 5, min_score: float = 0.5):
+    def __init__(
+        self,
+        k: int = 5,
+        min_score: float = 0.5,
+        company_filter: str = None
+    ):
         """
         PostgresRM 초기화
 
@@ -1268,6 +1278,7 @@ class PostgresRM(dspy.Retrieve):
             min_score: 최소 유사도 임계값 (기본값: 0.5)
                        검색 결과의 score가 이 값보다 낮으면 경고 로그를 남김
                        (추후 외부 검색 연동을 위한 포석)
+            company_filter: 기본 기업명 필터 (None이면 전체 검색)
 
         Raises:
             RuntimeError: PostgresConnector 초기화 실패 시
@@ -1278,9 +1289,23 @@ class PostgresRM(dspy.Retrieve):
 
         self.connector = PostgresConnector()
         self.min_score = min_score
+        self.company_filter = company_filter
         self.usage = 0
 
-        logging.info(f"PostgresRM initialized with k={k}, min_score={min_score}")
+        logging.info(
+            f"PostgresRM initialized with k={k}, min_score={min_score}, "
+            f"company_filter={company_filter}"
+        )
+
+    def set_company_filter(self, company_name: str):
+        """
+        기업명 필터 동적 설정
+
+        Args:
+            company_name: 필터링할 기업명 (None이면 필터 해제)
+        """
+        self.company_filter = company_name
+        logging.info(f"PostgresRM company_filter updated to: {company_name}")
 
     def get_usage_and_reset(self):
         """
@@ -1293,6 +1318,60 @@ class PostgresRM(dspy.Retrieve):
         self.usage = 0
         return {"PostgresRM": usage}
 
+    def _detect_comparison_and_expand_filter(self, query: str) -> tuple:
+        """
+        비교 질문 감지 및 필터 확장 전략 (Query Routing)
+
+        비교/경쟁 키워드가 포함된 질문인 경우, 질문에서 언급된 기업들로
+        필터를 확장합니다 (해제가 아닌 Allow-list 확장).
+
+        Args:
+            query: 검색 쿼리
+
+        Returns:
+            tuple: (company_filter, company_filter_list)
+                - 일반 질문: (self.company_filter, None)
+                - 비교 질문: (None, [기업1, 기업2, ...])
+        """
+        try:
+            from src.common.config import (
+                is_comparison_query,
+                extract_companies_from_query,
+                get_canonical_company_name
+            )
+
+            if not is_comparison_query(query):
+                # 일반 질문: 기본 필터 사용
+                return (self.company_filter, None)
+
+            # 비교 질문: 질문에서 언급된 기업들 추출
+            mentioned_companies = extract_companies_from_query(query)
+
+            if not mentioned_companies:
+                # 비교 키워드는 있지만 구체적인 기업명이 없음
+                # 기본 필터 유지 (안전하게)
+                logging.warning(
+                    f"Comparison query detected but no companies found: {query}. "
+                    f"Keeping default filter: {self.company_filter}"
+                )
+                return (self.company_filter, None)
+
+            # 기본 필터 기업도 리스트에 추가 (현재 분석 대상)
+            if self.company_filter:
+                canonical_default = get_canonical_company_name(self.company_filter)
+                if canonical_default not in mentioned_companies:
+                    mentioned_companies.append(canonical_default)
+
+            logging.info(
+                f"Comparison query detected! Expanding filter to: {mentioned_companies}"
+            )
+            return (None, mentioned_companies)
+
+        except ImportError:
+            # src.common.config를 import할 수 없는 경우 기본 필터 사용
+            logging.warning("Could not import config for query routing. Using default filter.")
+            return (self.company_filter, None)
+
     def forward(
         self,
         query_or_queries: Union[str, List[str]],
@@ -1301,6 +1380,10 @@ class PostgresRM(dspy.Retrieve):
     ):
         """
         STORM 엔진에서 호출하는 검색 메서드
+
+        Query Routing:
+        - 일반 질문: company_filter로 단일 기업 문서만 검색
+        - 비교 질문: company_filter_list로 확장하여 복수 기업 검색
 
         Args:
             query_or_queries: 검색 쿼리 (단일 문자열 또는 문자열 리스트)
@@ -1331,8 +1414,16 @@ class PostgresRM(dspy.Retrieve):
 
         for query in queries:
             try:
-                # PostgresConnector를 통한 벡터 검색
-                results = self.connector.search(query, top_k=search_k)
+                # Query Routing: 비교 질문 감지 및 필터 확장
+                company_filter, company_filter_list = self._detect_comparison_and_expand_filter(query)
+
+                # PostgresConnector를 통한 벡터 검색 (필터 적용)
+                results = self.connector.search(
+                    query,
+                    top_k=search_k,
+                    company_filter=company_filter,
+                    company_filter_list=company_filter_list
+                )
 
                 for result in results:
                     # 최소 점수 체크 (하이브리드 검색 로직 준비)
@@ -1340,15 +1431,6 @@ class PostgresRM(dspy.Retrieve):
                         low_score_count += 1
 
                     # STORM 호환 포맷으로 변환
-                    # 기존 RM들은 'snippets' 필드를 사용하므로 호환성 추가
-                    # collected_results.append({
-                    #     "content": result.get("content", ""),
-                    #     "snippets": [result.get("content", "")],  # STORM 호환
-                    #     "title": result.get("title", ""),
-                    #     "url": result.get("url", ""),
-                    #     "description": result.get("title", ""),  # STORM 호환
-                    #     "score": result.get("score", 0.0)
-                    # })
 
                     entry = {
                         "content": result.get("content", ""),
