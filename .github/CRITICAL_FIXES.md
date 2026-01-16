@@ -226,3 +226,120 @@ python -m scripts.run_ingestion --test
 - **Fixed by**: AI Developer (2026-01-16 14:30-15:00)
 - **Verified by**: Automated Test Suite (2026-01-16 15:00)
 - **Status**: ✅ Deployed to `main` branch
+---
+
+### 3. Search Invisibility for Efficient Mode Data (P0)
+
+#### Problem
+`--efficient` 모드로 적재된 데이터(34,393건)가 검색에서 전혀 표시되지 않는 심각한 버그.
+
+```python
+# 🔴 BEFORE (BUG):
+# postgres_connector.py search() 함수
+company_condition = "AND metadata->>'company_name' = %s"
+
+# 문제: efficient 모드 데이터는 metadata에 company_name 키가 없음!
+# 결과: WHERE 조건에서 0건 반환 → 빈 배열 → Reranker 크래시
+```
+
+**증상:**
+```
+Error: Expected 2D array, got 1D array instead: array=[]
+```
+
+#### Impact
+- `--efficient` 모드로 적재된 34,393건 데이터가 **완전 검색 불가**
+- 현대엔지니어링, 삼양식품 등 실제 기업 분석 불가
+- 시스템이 "데이터 없음"으로 크래시
+
+#### Root Cause
+| 적재 방식 | metadata에 company_name | 검색 가능? |
+|---------|------------------------|-----------|
+| `--test` 모드 | ✅ 있음 | ✅ 가능 |
+| `--efficient` 모드 | ❌ 없음 | ❌ **불가** |
+
+#### Fix
+**메타데이터 대신 FK 체인을 통해 기업명 조회:**
+
+```sql
+-- 🔴 BEFORE:
+SELECT * FROM "Source_Materials"
+WHERE metadata->>'company_name' = '현대엔지니어링'
+
+-- ✅ AFTER:
+SELECT sm.*, c.company_name as resolved_company_name
+FROM "Source_Materials" sm
+JOIN "Analysis_Reports" ar ON sm.report_id = ar.id
+JOIN "Companies" c ON ar.company_id = c.id
+WHERE c.company_name = '현대엔지니어링'
+```
+
+#### Files Changed
+- `knowledge_storm/db/postgres_connector.py` (Line 580-630): SQL JOIN 쿼리 수정
+- `knowledge_storm/db/postgres_connector.py` (Line 690-710): `resolved_company_name` 사용
+
+#### Code Changes
+```python
+# postgres_connector.py search()
+sql = f"""
+    SELECT 
+        sm.id,
+        sm.raw_content, 
+        sm.section_path, 
+        sm.chunk_type, 
+        sm.report_id, 
+        sm.sequence_order,
+        sm.metadata,
+        c.company_name as resolved_company_name,  -- JOIN에서 가져옴
+        ...
+    FROM "Source_Materials" sm
+    JOIN "Analysis_Reports" ar ON sm.report_id = ar.id
+    JOIN "Companies" c ON ar.company_id = c.id
+    WHERE sm.chunk_type != 'noise_merged'
+    {company_condition}  -- c.company_name = %s
+    ...
+"""
+
+# Source Tagging에서 resolved_company_name 우선 사용
+company_name = row.get('resolved_company_name') or \
+               chunk_metadata.get('company_name', 'Unknown Company')
+```
+
+#### Verification
+```bash
+# 1. JOIN 검색 테스트
+python scripts/test_join_search.py
+
+# 2. 현대엔지니어링 STORM 분석
+python -m scripts.run_storm --topic "현대엔지니어링 기업 개요"
+```
+
+**Expected Result:**
+```
+✅ FIX-Search-002 성공: 현대엔지니어링 데이터 검색 가능!
+Found 10 results for query: 현대엔지니어링 기업 개요
+Successful: 1/1
+```
+
+#### Diagnosis Script
+`scripts/diagnose_metadata.py`로 메타데이터 상태 확인:
+```bash
+python scripts/diagnose_metadata.py
+```
+
+Output:
+```
+=== 전체 Source_Materials 메타데이터 통계 ===
+총 레코드: 41,244
+company_name 있음: 6,851 (test mode only)
+company_name 없음: 34,393 (efficient mode)
+```
+
+---
+
+## Approval Log (FIX-Search-002)
+- **Identified by**: Tech Leader (2026-01-16 17:00)
+- **Fixed by**: AI Developer (2026-01-16 17:00-18:00)
+- **Verified by**: Manual Test - 현대엔지니어링 분석 성공 (2026-01-16 18:00)
+- **Commit**: `15250d6` 
+- **Status**: ✅ Deployed to `main` branch
