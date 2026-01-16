@@ -197,6 +197,7 @@ metadata JSONB                   -- {company_name, has_merged_meta, section, ...
 Output of STORM runs:
 ```sql
 company_name VARCHAR(255),
+company_id INTEGER REFERENCES "Companies"(id) ON DELETE CASCADE,  -- ✅ FK (2026-01-16)
 topic TEXT,
 report_content TEXT,             -- Polished article
 toc_text TEXT,                   -- Table of contents
@@ -205,6 +206,8 @@ conversation_log JSONB,          -- Full agent dialogue
 meta_info JSONB,                 -- {config, search_results}
 model_name VARCHAR(100)          -- 'gpt-4o' | 'gemini-1.5-pro'
 ```
+
+**Important**: `company_id`는 `company_name`으로 자동 조회되므로 선택적 파라미터입니다 (하위 호환성).
 
 ## Testing Philosophy
 
@@ -232,11 +235,13 @@ def test_postgres_rm_query_routing():
 
 ## Common Pitfalls (Learned from CLAUDE.md)
 
-1. **Module vs Folder Name Conflicts**: Never create `package/utils/` if `package/utils.py` exists (Python prioritizes folder)
-2. **Metadata Structure Mismatch**: Check if fields are JSONB keys or real columns before writing SQL
-3. **STORM Output URLs Must Be Unique**: Each chunk needs unique URL (e.g., `dart_report_{report_id}_chunk_{chunk_id}`) or all references collapse to `[1]`
-4. **Embedding Dimension Validation**: Run `validate_embedding_dimension_compatibility()` on startup to catch mismatches early
-5. **Rate Limit Backoff**: Don't give up on 429 errors - exponentially back off up to 5 minutes
+1. **Silent Failure in Loops**: NEVER use `if success:` pattern in batch operations - always raise exception on failure (Fixed: 2026-01-16)
+2. **String-based FK**: Always use integer FK instead of string matching for entity relationships (Fixed: 2026-01-16)
+3. **Module vs Folder Name Conflicts**: Never create `package/utils/` if `package/utils.py` exists (Python prioritizes folder)
+4. **Metadata Structure Mismatch**: Check if fields are JSONB keys or real columns before writing SQL
+5. **STORM Output URLs Must Be Unique**: Each chunk needs unique URL (e.g., `dart_report_{report_id}_chunk_{chunk_id}`) or all references collapse to `[1]`
+6. **Embedding Dimension Validation**: Run `validate_embedding_dimension_compatibility()` on startup to catch mismatches early
+7. **Rate Limit Backoff**: Don't give up on 429 errors - exponentially back off up to 5 minutes
 
 ## Documentation Strategy
 
@@ -244,11 +249,13 @@ When implementing new features:
 1. Add technical details to [CLAUDE.md](CLAUDE.md) (error log format)
 2. Create feature report in `docs/FEAT-XXX-*.md` (executive summary)
 3. Update relevant instruction files (`.github/instructions/*.instructions.md`)
-4. Write verification test in `test/verify_*.py`
+4. Write verification test in `verify/verify_*.py`
+5. **[NEW]** Document critical bugs in [.github/CRITICAL_FIXES.md](.github/CRITICAL_FIXES.md)
 
 ---
 
 **Need more context?** Check:
 - [CLAUDE.md](CLAUDE.md) - Error history and solutions
+- [.github/CRITICAL_FIXES.md](.github/CRITICAL_FIXES.md) - P0/P1 bug fixes
 - [docs/](docs/) - Feature implementation reports
 - [.github/instructions/](instructions/) - Domain-specific rules

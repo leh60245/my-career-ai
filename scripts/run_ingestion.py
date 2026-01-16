@@ -37,7 +37,7 @@ def run_test_mode():
     pipeline.run_test()
 
 
-def run_efficient_mode(reset_db: bool = False, limit: int = None, bgn_de: str = None, end_de: str = None):
+def run_efficient_mode(reset_db: bool = False, limit: int | None = None, bgn_de: str | None = None, end_de: str | None = None):
     """효율 모드: 사업보고서가 있는 기업만 처리"""
     from src.ingestion import DataPipeline
 
@@ -53,7 +53,7 @@ def run_custom_mode(stock_codes: list, reset_db: bool = False):
     pipeline.run(stock_codes=stock_codes, reset_db=reset_db)
 
 
-def run_embed_mode(batch_size: int = 32, limit: int = None, force: bool = False):
+def run_embed_mode(batch_size: int = 32, limit: int | None = None, force: bool = False):
     """임베딩 생성 모드 (Context Look-back 방식)"""
     from src.ingestion import ContextLookbackEmbeddingWorker
 

@@ -160,7 +160,7 @@ def select_company_and_topic() -> tuple[str, str]:
     return target_company, target_topic
 
 
-def _extract_company_from_topic(topic: str, default_company: str = None) -> str:
+def _extract_company_from_topic(topic: str, default_company: str | None) -> str:
     """
     토픽 문자열에서 기업명을 추출
 
@@ -484,8 +484,8 @@ def setup_lm_configs(provider: str = "openai") -> STORMWikiLMConfigs:
         ModelClass = OpenAIModel if api_type == "openai" else AzureOpenAIModel
 
         # 모델명 설정
-        gpt_35_model_name = "gpt-3.5-turbo" if api_type == "openai" else "gpt-35-turbo"
-        gpt_4_model_name = "gpt-4o"
+        gpt_35_model_name = "gpt-5-mini-2025-08-07" 
+        gpt_4_model_name = "gpt-5.2"
 
         # Azure 설정 (필요시)
         if api_type == "azure":
