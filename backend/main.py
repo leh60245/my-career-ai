@@ -18,7 +18,7 @@ from datetime import datetime
 
 # Database 모듈 임포트
 from backend.database import get_db_cursor, query_report_by_id, query_all_reports
-from backend.config import TOPICS, format_topic_list
+from src.common.config import get_topic_list_for_api
 from psycopg2.extras import RealDictCursor
 import psycopg2
 
@@ -187,8 +187,7 @@ async def get_topics():
         [
             {
                 "id": "T01",
-                "label": "기업 개요 및 주요 사업 내용",
-                "description": "..."
+                "label": "기업 개요 및 주요 사업 내용"
             },
             ...
         ]
@@ -198,7 +197,7 @@ async def get_topics():
     - Frontend에서 Dropdown 구성 시 사용
     - "custom" 주제는 사용자 정의 입력 활성화 플래그
     """
-    return format_topic_list()
+    return get_topic_list_for_api()
 
 
 @app.post("/api/generate", response_model=JobStatusResponse)
