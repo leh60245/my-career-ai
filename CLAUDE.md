@@ -97,21 +97,61 @@ references_data
      - DB 저장: topic에 순수 주제만 저장
      - LLM 쿼리: 내부 변수로 f"{company_name} {topic}" 구성
 
-3. Frontend Dashboard 개선:
+### [2026-01-16] Topic 정규화 및 설정 중앙화 - 파일 위치 수정
+
+**오류 상황:**
+- Topic 컬럼에 "{기업명} {분석 주제}"가 묶여 저장되어 같은 주제로 Grouping이 불가능
+- Main.py에 주제 목록이 하드코딩되어 있어 유지보수 어려움
+- Frontend에서 자유로운 텍스트 입력만 가능하여 데이터 일관성 부족
+
+**원인:**
+1. Backend 로직에서 company_name과 topic을 합쳐서 DB 저장
+2. 설정이 분산되어 있어 중앙 관리 불가능
+3. 주제 목록이 고정되어 있지 않아 분류 불가능
+
+**해결 방안:**
+1. **src/common/config.py에 TOPICS 정의** (모든 설정의 단일 진실 공급원 SSOT)
+   - TOPICS 리스트 (Key-Value 형식)
+   - id: 고유 식별자 (T01, T02, ..., custom)
+   - label: UI 표시명  
+   - value: DB/LLM에 전달될 순수한 주제
+   - 함수: get_topic_value_by_id(), get_topic_list_for_api()
+
+2. **Backend API 개선** (backend/main.py)
+   - src.common.config에서 TOPICS 임포트
+   - GET /api/topics에서 get_topic_list_for_api() 사용
+
+3. **DB 저장 로직 분리** (scripts/run_storm.py - CRITICAL)
+   - _extract_pure_topic() 함수 추가
+   - save_report_to_db()에서 company_name과 pure_topic 분리
+   - DB 저장: pure_topic만 저장 (기업명 제거)
+   - LLM 질의: 내부에서 f"{company_name} {pure_topic}" 구성
+
+4. **Frontend Dashboard 개선**
    - Topics SELECT BOX 추가
    - custom 주제 선택 시 텍스트 입력 필드 활성화
    - 선택된 주제 미리보기
 
 **구현 내용:**
-- backend/config.py: TOPICS 정의, 헬퍼 함수 (get_topic_label_by_id, is_custom_topic 등)
-- backend/main.py: GET /api/topics 추가, POST /api/generate 수정
+- src/common/config.py: TOPICS 정의, 헬퍼 함수
+- backend/main.py: GET /api/topics 수정, 임포트 경로 변경
+- scripts/run_storm.py: _extract_pure_topic(), save_report_to_db() 개선
+- backend/config.py: 삭제 (잘못된 위치)
 - frontend/.../Dashboard.jsx: Topic SELECT BOX, 직접 입력 필드 추가
 - frontend/.../apiService.js: fetchTopics() 함수 추가
 
+**결과 (DB 저장 형식):**
+```
+Generated_Reports.topic = "기업 개요"          (순수 주제만)
+Generated_Reports.company_name = "삼성전자"     (별도 관리)
+LLM 쿼리 = "삼성전자 기업 개요"                (내부 구성)
+```
+
 **교훈 (규칙 추가):**
-1. **설정 중앙화**: 하드코딩 금지, 별도 config.py에서 관리
-2. **데이터 정제**: 저장과 사용 시점을 구분하여 데이터 무결성 확보
-3. **Key-Value 구조**: ID 고정, 텍스트 변경 가능하도록 설계
+1. **설정 위치 명확화**: src/common/config.py는 모든 설정의 중앙저장소
+2. **데이터 정제 분리**: 저장(순수 topic) ≠ 사용(company + topic)
+3. **DB FK 설계**: company_name과 topic은 독립적인 칼럼으로 관리
+4. **파일 위치 규칙**: backend/config.py ❌ → src/common/config.py ✅
 
 ### [2026-01-10] Gemini 응답 `list index out of range` 오류
 
