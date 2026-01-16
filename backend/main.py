@@ -18,6 +18,7 @@ from datetime import datetime
 
 # Database 모듈 임포트
 from backend.database import get_db_cursor, query_report_by_id, query_all_reports
+from backend.config import TOPICS, format_topic_list
 from psycopg2.extras import RealDictCursor
 import psycopg2
 
@@ -176,15 +177,44 @@ async def get_companies():
         return ["SK하이닉스", "현대엔지니어링", "NAVER", "삼성전자", "LG전자"]
 
 
+@app.get("/api/topics")
+async def get_topics():
+    """
+    [GET] 분석 주제(Topic) 목록 조회
+    
+    Returns:
+        List[Dict]: 주제 리스트
+        [
+            {
+                "id": "T01",
+                "label": "기업 개요 및 주요 사업 내용",
+                "description": "..."
+            },
+            ...
+        ]
+    
+    특징:
+    - 기업명과 무관하게 전체 공통 주제 반환
+    - Frontend에서 Dropdown 구성 시 사용
+    - "custom" 주제는 사용자 정의 입력 활성화 플래그
+    """
+    return format_topic_list()
+
+
 @app.post("/api/generate", response_model=JobStatusResponse)
 async def generate_report(request: GenerateRequest):
     """
     [POST] 리포트 생성 요청
     
-    실제 동작 (현재):
-    1. DB에서 가장 최근의 리포트를 조회
-    2. mock job_id 발급
-    3. 상태를 "processing"으로 반환
+    데이터 정제 로직 (중요):
+    - 입력: company_name과 topic을 분리해서 받음
+    - DB 저장: topic 컬럼에는 순수한 주제 텍스트만 저장
+    - LLM 쿼리: 내부적으로만 f"{company_name} {topic}"으로 합쳐서 사용
+    
+    흐름:
+    1. Frontend에서 { "company_name": "SK하이닉스", "topic": "기업 개요..." } 수신
+    2. DB에 저장할 때: topic = "기업 개요..." (기업명 제외)
+    3. LLM 호출 시: query = f"SK하이닉스 기업 개요..." (내부 변수)
     
     차후 개선:
     1. PostgresRM으로 관련 문서 검색
@@ -193,6 +223,16 @@ async def generate_report(request: GenerateRequest):
     4. Celery/Redis 비동기 작업 큐
     """
     try:
+        # ✅ 중요: 입력 검증
+        # topic이 이미 company_name을 포함하면 제거 (방어적 코딩)
+        topic = request.topic
+        company_name = request.company_name
+        
+        # 만약 topic에 company_name이 포함되어 있으면 제거
+        # 예: "SK하이닉스 기업 개요" → "기업 개요"
+        if topic.startswith(company_name):
+            topic = topic[len(company_name):].strip()
+        
         # DB에서 가장 최근 리포트 ID 조회
         with get_db_cursor(RealDictCursor) as cur:
             cur.execute("""
@@ -202,14 +242,25 @@ async def generate_report(request: GenerateRequest):
             result = cur.fetchone()
             latest_id = result['id'] if result else 1
         
+        # ✅ LLM 엔진 호출 시에만 합쳐서 사용
+        # (현재는 mock이지만, run_storm.py 연동 시 여기에 query 구성)
+        llm_query = f"{company_name} {topic}"
+        print(f"[INFO] LLM Query: {llm_query}")
+        
         return JobStatusResponse(
             job_id=f"job-{latest_id}",
             status="processing",
             progress=0,
-            message=f"{request.company_name}에 대한 '{request.topic}' 리포트 생성을 시작합니다."
+            message=f"{company_name}에 대한 '{topic}' 리포트 생성을 시작합니다."
         )
     except Exception as e:
         print(f"❌ Error in generate_report: {e}")
+        return JobStatusResponse(
+            job_id="mock-job-001",
+            status="processing",
+            progress=0,
+            message=f"{request.company_name}에 대한 '{request.topic}' 리포트 생성을 시작합니다."
+        )
         return JobStatusResponse(
             job_id="mock-job-001",
             status="processing",

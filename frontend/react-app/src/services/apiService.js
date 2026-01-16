@@ -15,6 +15,20 @@ const apiClient = axios.create({
 });
 
 /**
+ * 분석 주제(Topics) 목록 조회
+ * GET /api/topics
+ */
+export const fetchTopics = async () => {
+  try {
+    const response = await apiClient.get('/api/topics');
+    return response.data;
+  } catch (error) {
+    console.error('Failed to fetch topics:', error);
+    throw error;
+  }
+};
+
+/**
  * 기업 목록 조회
  * GET /api/companies
  */

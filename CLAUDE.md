@@ -72,6 +72,47 @@ references_data
 2. **Mock 데이터 생성 금지**: 실제 DB에 테스트 데이터 임의 삽입 금지
 3. **JSONB 타입 명확화**: JSONB 필드의 형식을 사전에 파악 필요
 
+### [2026-01-16] Topic 정규화 및 설정 중앙화
+
+**오류 상황:**
+- Topic 컬럼에 "{기업명} {분석 주제}"가 묶여 저장되어 같은 주제로 Grouping이 불가능
+- Main.py에 주제 목록이 하드코딩되어 있어 유지보수 어려움
+- Frontend에서 자유로운 텍스트 입력만 가능하여 데이터 일관성 부족
+
+**원인:**
+1. Backend 로직에서 company_name과 topic을 합쳐서 DB 저장
+2. 설정이 분산되어 있어 중앙 관리 불가능
+3. 주제 목록이 고정되어 있지 않아 분류 불가능
+
+**해결 방안:**
+1. `backend/config.py` 생성:
+   - TOPICS 리스트 (Key-Value 형식)
+   - id: 고유 식별자 (T01, T02, ..., custom)
+   - label: UI 표시명
+   - description: 주제 설명
+
+2. Backend API 개선:
+   - GET /api/topics 엔드포인트 추가
+   - POST /api/generate 데이터 정제 로직 추가
+     - DB 저장: topic에 순수 주제만 저장
+     - LLM 쿼리: 내부 변수로 f"{company_name} {topic}" 구성
+
+3. Frontend Dashboard 개선:
+   - Topics SELECT BOX 추가
+   - custom 주제 선택 시 텍스트 입력 필드 활성화
+   - 선택된 주제 미리보기
+
+**구현 내용:**
+- backend/config.py: TOPICS 정의, 헬퍼 함수 (get_topic_label_by_id, is_custom_topic 등)
+- backend/main.py: GET /api/topics 추가, POST /api/generate 수정
+- frontend/.../Dashboard.jsx: Topic SELECT BOX, 직접 입력 필드 추가
+- frontend/.../apiService.js: fetchTopics() 함수 추가
+
+**교훈 (규칙 추가):**
+1. **설정 중앙화**: 하드코딩 금지, 별도 config.py에서 관리
+2. **데이터 정제**: 저장과 사용 시점을 구분하여 데이터 무결성 확보
+3. **Key-Value 구조**: ID 고정, 텍스트 변경 가능하도록 설계
+
 ### [2026-01-10] Gemini 응답 `list index out of range` 오류
 
 **오류 상황:**
