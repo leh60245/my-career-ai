@@ -100,7 +100,7 @@ class DataPipeline:
 
         return self.stats
 
-    def run_test(self, stock_codes: List[str] = None):
+    def run_test(self, stock_codes: List[str] | None):
         """
         테스트 모드 실행 (기본: 삼성전자, SK하이닉스, NAVER)
         """
@@ -119,8 +119,8 @@ class DataPipeline:
 
     def run_efficient(
         self,
-        bgn_de: str = None,
-        end_de: str = None,
+        bgn_de: str | None,
+        end_de: str | None,
         reset_db: bool = False,
         limit: Optional[int] = None
     ):
