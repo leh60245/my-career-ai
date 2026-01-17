@@ -1,11 +1,18 @@
 # 🚨 Critical Bug Fixes & Schema Improvements
 
-## Overview
-**Date**: 2026-01-16  
-**Priority**: P0 (Critical)  
-**Author**: Enterprise STORM Team
+**Status**: Production Bug Tracking (P0/P1 only)  
+**Purpose**: Record bugs that were deployed and fixed  
+**See also**: [CLAUDE.md](../CLAUDE.md) for learning patterns & rules
 
-이 문서는 데이터 정합성과 스키마 무결성 관련 중요 수정 사항을 기록합니다.
+---
+
+## Overview
+
+이 문서는 **배포된 P0/P1 버그만 기록**합니다 (데이터 무결성, 프로덕션 장애).
+
+자세한 학습 내용과 규칙은 [CLAUDE.md](../CLAUDE.md)를 참조하세요.
+
+---
 
 ## Fixed Issues
 
