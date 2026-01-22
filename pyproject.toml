@@ -1,0 +1,46 @@
+[tool.ruff]
+# 1. 타겟 파이썬 버전 지정 (배포 서버 버전에 맞춤, 예: py39, py310, py311)
+target-version = "py311"
+
+# 2. 줄 길이: Black과 동일한 88을 쓰거나, 모니터가 커진 요즘은 120도 많이 사용
+line-length = 88
+
+# 3. 제외할 폴더
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "migrations",  # Django/SQLAlchemy 사용 시 마이그레이션 파일은 건드리지 않음
+]
+
+[tool.ruff.lint]
+# 4. 적용할 규칙 (현직 필수 조합)
+select = [
+    "E",   # pycodestyle (기본 에러)
+    "F",   # Pyflakes (논리 에러)
+    "W",   # pycodestyle (경고)
+    "I",   # isort (Import 정렬)
+    "B",   # flake8-bugbear (잠재적 버그 탐지 - 중요!)
+    "UP",  # pyupgrade (최신 파이썬 문법으로 자동 변환, 예: Optional[int] -> int | None)
+    "N",   # pep8-naming (변수/함수 이름 규칙 준수 여부)
+    "SIM", # flake8-simplify (더 간결한 코드로 제안)
+]
+
+# 5. 무시할 규칙 (충돌 방지 및 편의성)
+ignore = [
+    "E501",  # 줄 길이 위반 (format이 알아서 줄바꿈 하므로 린터에서는 무시)
+    "B008",  # 함수 인자에 가변 객체 사용 (FastAPI의 Depends 사용 시 오탐지 방지)
+]
+
+[tool.ruff.format]
+# 6. 따옴표 스타일 (팀 컨벤션에 따라 결정)
+quote-style = "double" 
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.ruff.lint.isort]
+# 7. Import 섹션 구분 (서드파티 라이브러리와 내 프로젝트 모듈 구분)
+known-first-party = ["my_project"] # 내 프로젝트 폴더명 입력

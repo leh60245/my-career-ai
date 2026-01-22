@@ -12,7 +12,7 @@ Database Schema (Source_Materials):
     - sequence_order: INTEGER (문서 내 등장 순서)
     - raw_content: TEXT (본문 또는 Markdown 표)
     - embedding: vector(768) (pgvector)
-    - metadata: JSONB (메타데이터)
+    - meta_info: JSONB (메타데이터)
         - has_merged_meta: boolean (병합된 메타 정보 포함 여부)
         - is_noise_dropped: boolean (noise_merged 타입일 때만 존재)
         - has_embedding: boolean
@@ -334,7 +334,7 @@ class PostgresConnector:
                 # 메타데이터에 company_name이 없으면 필터링 우회 (데이터 살리기)
                 doc['score'] = doc.get('score', 0)  # 점수 유지
                 doc['_entity_match'] = None  # 매칭 여부 불명
-                logger.debug(f"[Rerank] PASS (no company_name in metadata): {doc.get('url', 'unknown')[:40]}...")
+                logger.debug(f"[Rerank] PASS (no company_name in meta_info): {doc.get('url', 'unknown')[:40]}...")
                 reranked_results.append(doc)
                 continue
 
@@ -554,8 +554,8 @@ class PostgresConnector:
             query: 검색 쿼리 문자열
             top_k: 반환할 최대 결과 수 (기본값: 5)
             window_size: Table 청크의 앞뒤로 가져올 인접 청크 수 (기본값: 1)
-            company_filter: 단일 기업명 필터 (metadata->>'company_name' = ?)
-            company_filter_list: 복수 기업명 필터 (metadata->>'company_name' IN (?))
+            company_filter: 단일 기업명 필터 (meta_info->>'company_name' = ?)
+            company_filter_list: 복수 기업명 필터 (meta_info->>'company_name' IN (?))
 
         Returns:
             STORM 호환 포맷의 검색 결과 리스트
@@ -616,10 +616,10 @@ class PostgresConnector:
                         sm.chunk_type, 
                         sm.report_id, 
                         sm.sequence_order,
-                        sm.metadata,
+                        sm.meta_info,
                         c.company_name as resolved_company_name,
-                        COALESCE((sm.metadata->>'has_merged_meta')::boolean, false) as has_merged_meta,
-                        COALESCE((sm.metadata->>'is_noise_dropped')::boolean, false) as is_noise_dropped,
+                        COALESCE((sm.meta_info->>'has_merged_meta')::boolean, false) as has_merged_meta,
+                        COALESCE((sm.meta_info->>'is_noise_dropped')::boolean, false) as is_noise_dropped,
                         (sm.embedding <=> %s::vector) as distance
                     FROM "Source_Materials" sm
                     JOIN "Analysis_Reports" ar ON sm.report_id = ar.id
@@ -692,8 +692,8 @@ class PostgresConnector:
 
                     # [FIX-Search-002] Source Tagging을 위한 메타데이터 추가
                     # JOIN에서 가져온 resolved_company_name 우선 사용 (efficient 모드 호환)
-                    chunk_metadata = row.get('metadata', {}) or {}
-                    company_name = row.get('resolved_company_name') or chunk_metadata.get('company_name', 'Unknown Company')
+                    chunk_meta_info = row.get('meta_info', {}) or {}
+                    company_name = row.get('resolved_company_name') or chunk_meta_info.get('company_name', 'Unknown Company')
                     report_id = row['report_id']
 
                     results.append({
