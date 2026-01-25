@@ -1,14 +1,5 @@
-
 ```
 enterprise-storm
-├─ .pytest_cache
-│  ├─ CACHEDIR.TAG
-│  ├─ README.md
-│  └─ v
-│     └─ cache
-│        ├─ lastfailed
-│        ├─ nodeids
-│        └─ stepwise
 ├─ assets
 │  ├─ co-storm-workflow.jpg
 │  ├─ logo.svg
@@ -18,10 +9,7 @@ enterprise-storm
 ├─ backend
 │  ├─ assets
 │  │  └─ sample_report.md
-│  ├─ database.py
-│  ├─ inspect_schema.py
 │  ├─ main.py
-│  ├─ main_v3.py
 │  ├─ storm_service.py
 │  └─ __init__.py
 ├─ docker-compose.yml
@@ -51,12 +39,6 @@ enterprise-storm
 ├─ frontend
 │  └─ react-app
 │     ├─ .eslintrc.json
-│     ├─ dist
-│     │  ├─ assets
-│     │  │  ├─ index-B4GJRnWF.js
-│     │  │  ├─ index-B4GJRnWF.js.map
-│     │  │  └─ index-CVkp-3zK.css
-│     │  └─ index.html
 │     ├─ index.html
 │     ├─ package-lock.json
 │     ├─ package.json
@@ -117,19 +99,15 @@ enterprise-storm
 │  └─ __init__.py
 ├─ pyproject.toml
 ├─ pytest.ini
+├─ README.md
 ├─ requirements.txt
 ├─ scripts
 │  ├─ run_ingestion.py
-│  ├─ run_ingestion_v3.py
-│  ├─ run_storm.py
-│  └─ run_storm_v3.py
+│  └─ run_storm.py
 ├─ src
 │  ├─ common
 │  │  ├─ config.py
-│  │  ├─ db_connection.py
-│  │  ├─ db_utils.py
 │  │  ├─ embedding.py
-│  │  ├─ utils.py
 │  │  └─ __init__.py
 │  ├─ database
 │  │  ├─ connection.py
@@ -154,6 +132,11 @@ enterprise-storm
 │  │  │  ├─ source_material_repository.py
 │  │  │  └─ __init__.py
 │  │  └─ __init__.py
+│  ├─ engine
+│  │  ├─ adapter.py
+│  │  ├─ builder.py
+│  │  ├─ io.py
+│  │  └─ __init__.py
 │  ├─ ingestion
 │  │  ├─ dart_agent.py
 │  │  ├─ embedding_worker.py
@@ -173,22 +156,16 @@ enterprise-storm
 │  │  └─ __init__.py
 │  └─ __init__.py
 ├─ start_backend.sh
-├─ tests
-│  ├─ conftest.py
-│  ├─ integration
-│  │  ├─ test_db_connection.py
-│  │  ├─ test_repositories.py
-│  │  └─ __init__.py
-│  ├─ README.md
-│  ├─ unit
-│  │  ├─ test_generation_service.py
-│  │  └─ __init__.py
-│  └─ __init__.py
-└─ verify
-   ├─ verify_company_isolation.py
-   ├─ verify_entity_bias_fix.py
-   ├─ verify_feat002.py
-   ├─ verify_fix_ingest_loop.py
-   └─ verify_hybrid_rm.py
+└─ tests
+   ├─ conftest.py
+   ├─ integration
+   │  ├─ test_db_connection.py
+   │  ├─ test_repositories.py
+   │  └─ __init__.py
+   ├─ README.md
+   ├─ unit
+   │  ├─ test_generation_service.py
+   │  └─ __init__.py
+   └─ __init__.py
 
 ```
