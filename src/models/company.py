@@ -3,11 +3,10 @@ from typing import TYPE_CHECKING
 from sqlalchemy import Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin
+from src.models import Base, TimestampMixin
 
 if TYPE_CHECKING:
-    from .analysis_report import AnalysisReport
-    from .report_job import ReportJob
+    from src.models import AnalysisReport, ReportJob
 
 
 class Company(
@@ -25,8 +24,11 @@ class Company(
         index=True,
     )
 
-    corp_code: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
-    stock_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    corp_code: Mapped[str | None] = mapped_column(String(8), nullable=True, unique=True, index=True)  # 고유 번호
+    stock_code: Mapped[str | None] = mapped_column(
+        String(6), nullable=True, unique=True, index=True
+    )  # 상장회사인 경우 주식의 종목 코드
+    # induty_code: Mapped[str | None] = mapped_column(String(20), nullable=True)  # 산업 코드
     industry: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Relationships
@@ -42,7 +44,3 @@ class Company(
         Index("idx_company_corp_code", "corp_code"),
         Index("idx_company_created_at", "created_at"),
     )
-
-    def __repr__(self) -> str:
-        """String representation for debugging."""
-        return f"<Company(id={self.id}, name={self.company_name!r}, corp_code={self.corp_code!r})>"

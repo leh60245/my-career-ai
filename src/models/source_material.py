@@ -1,18 +1,16 @@
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
 
-from .base import Base
+from src.models import Base, CreatedAtMixin
 
 if TYPE_CHECKING:
-    from .analysis_report import AnalysisReport
+    from src.models import AnalysisReport
 
 
-class SourceMaterial(Base):
+class SourceMaterial(Base, CreatedAtMixin):
     __tablename__ = "source_materials"
 
     # Fields
@@ -26,12 +24,6 @@ class SourceMaterial(Base):
     table_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
     meta_info: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=func.now(),
-        nullable=False,
-    )
 
     # Relationships
     analysis_report: Mapped["AnalysisReport"] = relationship("AnalysisReport", back_populates="source_materials")

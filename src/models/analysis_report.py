@@ -1,31 +1,31 @@
-from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
 
-from .base import Base
+from src.common import AnalysisReportStatus
+from src.models import Base, CreatedAtMixin
 
 if TYPE_CHECKING:
-    from .company import Company
-    from .source_material import SourceMaterial
+    from src.models import Company, SourceMaterial
 
 
-class AnalysisReport(Base):
+class AnalysisReport(Base, CreatedAtMixin):
     __tablename__ = "analysis_reports"
 
     # Fields
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     company_id: Mapped[int] = mapped_column(Integer, ForeignKey("companies.id"), nullable=False)
 
-    report_type: Mapped[str | None] = mapped_column(String(50), default="annual", nullable=True)
+    reprt_code: Mapped[str | None] = mapped_column(
+        String(5), default="annual", nullable=True
+    )  # 1분기보고서:11013 | 반기보고서:11012 | 3분기보고서:11014 | 사업보고서:11011
     title: Mapped[str] = mapped_column(String(500), nullable=False)
-    rcept_no: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
-    rcept_dt: Mapped[str] = mapped_column(String(10), nullable=False)
-    status: Mapped[str] = mapped_column(String(50), default="PENDING", nullable=False)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), nullable=False)
+    rcept_no: Mapped[str] = mapped_column(String(14), unique=True, nullable=False)  # 접수번호
+    rcept_dt: Mapped[str] = mapped_column(String(8), nullable=False)  # YYYYMMDD 형식
+    status: Mapped[AnalysisReportStatus] = mapped_column(
+        String(50), default=AnalysisReportStatus.PENDING, nullable=False
+    )
 
     # Relationships
     company: Mapped["Company"] = relationship("Company", back_populates="analysis_reports")
