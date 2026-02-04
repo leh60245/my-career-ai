@@ -1,36 +1,7 @@
-"""
-Company Service - Business Logic for Company Operations
-
-Service layer implementing company-related domain logic.
-
-Responsibilities:
-    - Company lifecycle management (onboarding, deactivation)
-    - Business rule validation
-    - Coordination with DART API for data fetching
-    - Query optimization and caching
-    - Error handling and recovery
-
-Integration Points:
-    - CompanyRepository: Data access
-    - DartAgent: DART financial data fetching
-    - EmbeddingService: Company profile embeddings
-    - AnalysisService: Generate reports for companies
-
-Future Enhancements:
-    - Company similarity search
-    - Competitor identification
-    - Market position analysis
-    - Multi-factor company scoring
-
-Author: Enterprise Architecture Team
-Created: 2026-01-21
-Version: 1.0.0
-"""
-
 import logging
 
-from src.database.models import Company
-from src.database.repositories import CompanyRepository, DuplicateEntity
+from src.models import Company
+from src.repositories import CompanyRepository, DuplicateEntity
 
 logger = logging.getLogger(__name__)
 
@@ -73,17 +44,11 @@ class CompanyService:
         if company_id <= 0:
             raise ValueError("Company ID must be positive")
 
-        return await self.company_repo.get_by_id(company_id)
+        return await self.company_repo.get(company_id)
 
-    async def list_companies(
-        self, limit: int | None = None, offset: int = 0
-    ) -> list[Company]:
-        """
-        Get all companies (Pagination supported).
-        Replaces 'get_active_companies' as active status is removed.
-        """
-        # Repository의 list_all 사용
-        return await self.company_repo.list_all(limit=limit, offset=offset)
+    async def list_companies(self, limit: int | None = None, offset: int = 0) -> list[dict]:
+        companies = await self.company_repo.get_all(limit=limit, skip=offset)
+        return [{"id": c.id, "company_name": c.company_name} for c in companies]
 
     async def search_companies(self, query: str) -> list[Company]:
         """

@@ -15,6 +15,7 @@ diskcache
 psycopg2-binary
 google-genai==1.59.0
 rapidfuzz
+nest_asyncio
 
 # =========== DB 파트 ================# DART API
 pgvector

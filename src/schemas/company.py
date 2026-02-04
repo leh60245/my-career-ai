@@ -1,14 +1,3 @@
-"""
-Company Schemas - Request/Response Models for Company API
-
-Pydantic models for validating company-related API requests and responses.
-
-Refactored:
-- Removed 'active' field to sync with Phase 3 DB schema changes.
-- Removed 'description' field as requested.
-- Updated examples to reflect current schema.
-"""
-
 from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
@@ -28,17 +17,11 @@ class CompanyCreate(BaseModel):
         description="Official company name (required)",
     )
 
-    corp_code: str | None = Field(
-        None, max_length=20, description="6-digit DART corporation code"
-    )
+    corp_code: str | None = Field(None, max_length=20, description="6-digit DART corporation code")
 
-    stock_code: str | None = Field(
-        None, max_length=20, description="6-digit Korea Exchange stock code"
-    )
+    stock_code: str | None = Field(None, max_length=20, description="6-digit Korea Exchange stock code")
 
-    industry: str | None = Field(
-        None, max_length=100, description="Industry classification"
-    )
+    industry: str | None = Field(None, max_length=100, description="Industry classification")
 
     @field_validator("company_name")
     @classmethod
@@ -67,21 +50,13 @@ class CompanyUpdate(BaseModel):
     PATCH /api/companies/{id}
     """
 
-    company_name: str | None = Field(
-        None, min_length=1, max_length=255, description="Official company name"
-    )
+    company_name: str | None = Field(None, min_length=1, max_length=255, description="Official company name")
 
-    corp_code: str | None = Field(
-        None, max_length=20, description="DART corporation code"
-    )
+    corp_code: str | None = Field(None, max_length=20, description="DART corporation code")
 
-    stock_code: str | None = Field(
-        None, max_length=20, description="Korea Exchange stock code"
-    )
+    stock_code: str | None = Field(None, max_length=20, description="Korea Exchange stock code")
 
-    industry: str | None = Field(
-        None, max_length=100, description="Industry classification"
-    )
+    industry: str | None = Field(None, max_length=100, description="Industry classification")
 
     class Config:
         json_schema_extra = {"example": {"industry": "Electronics"}}

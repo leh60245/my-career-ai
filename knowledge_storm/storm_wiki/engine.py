@@ -66,7 +66,7 @@ class STORMWikiLMConfigs(LMConfigs):
             self.article_gen_lm = LitellmModel(model="gpt-4o-2024-05-13", max_tokens=700, **openai_kwargs)
             self.article_polish_lm = LitellmModel(model="gpt-4o-2024-05-13", max_tokens=4000, **openai_kwargs)
         elif openai_type and openai_type == "azure":
-            self.conv_simulator_lm = LitellmModel(model="azure/gpt-4o-mini-2024-07-18", max_tokens=500, **openai_kwargs)
+            self.conv_simulator_lm = LitellmModel(model="azure/gpt-4o-mini-2024-07-18", max_tokens=500, **azure_kwargs)
             self.question_asker_lm = LitellmModel(
                 model="azure/gpt-4o-mini-2024-07-18",
                 max_tokens=500,

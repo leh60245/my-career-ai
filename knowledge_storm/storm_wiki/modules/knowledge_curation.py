@@ -2,21 +2,20 @@ import concurrent.futures
 import logging
 import os
 from concurrent.futures import as_completed
-from typing import Union, List, Tuple, Optional, Dict
 
 import dspy
 
+from ...interface import Information, KnowledgeCurationModule, Retriever
+from ...utils import ArticleTextProcessing
 from .callback import BaseCallbackHandler
 from .persona_generator import StormPersonaGenerator
 from .storm_dataclass import DialogueTurn, StormInformationTable
-from ...interface import KnowledgeCurationModule, Retriever, Information
-from ...utils import ArticleTextProcessing
 
 try:
     from streamlit.runtime.scriptrunner import add_script_run_ctx
 
     streamlit_connection = True
-except ImportError as err:
+except ImportError:
     streamlit_connection = False
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -27,8 +26,8 @@ class ConvSimulator(dspy.Module):
 
     def __init__(
         self,
-        topic_expert_engine: Union[dspy.dsp.LM, dspy.dsp.HFModel],
-        question_asker_engine: Union[dspy.dsp.LM, dspy.dsp.HFModel],
+        topic_expert_engine: dspy.dsp.LM | dspy.dsp.HFModel,
+        question_asker_engine: dspy.dsp.LM | dspy.dsp.HFModel,
         retriever: Retriever,
         max_search_queries_per_turn: int,
         search_top_k: int,
@@ -56,19 +55,15 @@ class ConvSimulator(dspy.Module):
         persona: The persona of the Wikipedia writer.
         ground_truth_url: The ground_truth_url will be excluded from search to avoid ground truth leakage in evaluation.
         """
-        dlg_history: List[DialogueTurn] = []
+        dlg_history: list[DialogueTurn] = []
         for _ in range(self.max_turn):
-            user_utterance = self.wiki_writer(
-                topic=topic, persona=persona, dialogue_turns=dlg_history
-            ).question
+            user_utterance = self.wiki_writer(topic=topic, persona=persona, dialogue_turns=dlg_history).question
             if user_utterance == "":
                 logging.error("Simulated Wikipedia writer utterance is empty.")
                 break
             if user_utterance.startswith("Thank you so much for your help!"):
                 break
-            expert_output = self.topic_expert(
-                topic=topic, question=user_utterance, ground_truth_url=ground_truth_url
-            )
+            expert_output = self.topic_expert(topic=topic, question=user_utterance, ground_truth_url=ground_truth_url)
             dlg_turn = DialogueTurn(
                 agent_utterance=expert_output.answer,
                 user_utterance=user_utterance,
@@ -86,7 +81,7 @@ class WikiWriter(dspy.Module):
 
     The asked question will be used to start a next round of information seeking."""
 
-    def __init__(self, engine: Union[dspy.dsp.LM, dspy.dsp.HFModel]):
+    def __init__(self, engine: dspy.dsp.LM | dspy.dsp.HFModel):
         super().__init__()
         self.ask_question_with_persona = dspy.ChainOfThought(AskQuestionWithPersona)
         self.ask_question = dspy.ChainOfThought(AskQuestion)
@@ -96,14 +91,12 @@ class WikiWriter(dspy.Module):
         self,
         topic: str,
         persona: str,
-        dialogue_turns: List[DialogueTurn],
+        dialogue_turns: list[DialogueTurn],
         draft_page=None,
     ):
         conv = []
         for turn in dialogue_turns[:-4]:
-            conv.append(
-                f"You: {turn.user_utterance}\nExpert: Omit the answer here due to space limit."
-            )
+            conv.append(f"You: {turn.user_utterance}\nExpert: Omit the answer here due to space limit.")
         for turn in dialogue_turns[-4:]:
             conv.append(
                 f"You: {turn.user_utterance}\nExpert: {ArticleTextProcessing.remove_citations(turn.agent_utterance)}"
@@ -114,13 +107,9 @@ class WikiWriter(dspy.Module):
 
         with dspy.settings.context(lm=self.engine):
             if persona is not None and len(persona.strip()) > 0:
-                question = self.ask_question_with_persona(
-                    topic=topic, persona=persona, conv=conv
-                ).question
+                question = self.ask_question_with_persona(topic=topic, persona=persona, conv=conv).question
             else:
-                question = self.ask_question(
-                    topic=topic, persona=persona, conv=conv
-                ).question
+                question = self.ask_question(topic=topic, persona=persona, conv=conv).question
 
         return dspy.Prediction(question=question)
 
@@ -144,9 +133,7 @@ class AskQuestionWithPersona(dspy.Signature):
     """
 
     topic = dspy.InputField(prefix="Topic you want to write: ", format=str)
-    persona = dspy.InputField(
-        prefix="Your persona besides being a Wikipedia writer: ", format=str
-    )
+    persona = dspy.InputField(prefix="Your persona besides being a Wikipedia writer: ", format=str)
     conv = dspy.InputField(prefix="Conversation history:\n", format=str)
     question = dspy.OutputField(format=str)
 
@@ -193,7 +180,7 @@ class TopicExpert(dspy.Module):
 
     def __init__(
         self,
-        engine: Union[dspy.dsp.LM, dspy.dsp.HFModel],
+        engine: dspy.dsp.LM | dspy.dsp.HFModel,
         max_search_queries: int,
         search_top_k: int,
         retriever: Retriever,
@@ -210,13 +197,10 @@ class TopicExpert(dspy.Module):
         with dspy.settings.context(lm=self.engine, show_guidelines=False):
             # Identify: Break down question into queries.
             queries = self.generate_queries(topic=topic, question=question).queries
-            queries = [
-                q.replace("-", "").strip().strip('"').strip('"').strip()
-                for q in queries.split("\n")
-            ]
+            queries = [q.replace("-", "").strip().strip('"').strip('"').strip() for q in queries.split("\n")]
             queries = queries[: self.max_search_queries]
             # Search
-            searched_results: List[Information] = self.retriever.retrieve(
+            searched_results: list[Information] = self.retriever.retrieve(
                 list(set(queries)), exclude_urls=[ground_truth_url]
             )
             if len(searched_results) > 0:
@@ -226,17 +210,11 @@ class TopicExpert(dspy.Module):
                     info += "\n".join(f"[{n + 1}]: {s}" for s in r.snippets[:1])
                     info += "\n\n"
 
-                info = ArticleTextProcessing.limit_word_count_preserve_newline(
-                    info, 1000
-                )
+                info = ArticleTextProcessing.limit_word_count_preserve_newline(info, 1000)
 
                 try:
-                    answer = self.answer_question(
-                        topic=topic, conv=question, info=info
-                    ).answer
-                    answer = ArticleTextProcessing.remove_uncompleted_sentences_with_citations(
-                        answer
-                    )
+                    answer = self.answer_question(topic=topic, conv=question, info=info).answer
+                    answer = ArticleTextProcessing.remove_uncompleted_sentences_with_citations(answer)
                 except Exception as e:
                     logging.error(f"Error occurs when generating answer: {e}")
                     answer = "Sorry, I cannot answer this question. Please ask another question."
@@ -244,9 +222,7 @@ class TopicExpert(dspy.Module):
                 # When no information is found, the expert shouldn't hallucinate.
                 answer = "Sorry, I cannot find information for this question. Please ask another question."
 
-        return dspy.Prediction(
-            queries=queries, searched_results=searched_results, answer=answer
-        )
+        return dspy.Prediction(queries=queries, searched_results=searched_results, answer=answer)
 
 
 class StormKnowledgeCurationModule(KnowledgeCurationModule):
@@ -257,9 +233,9 @@ class StormKnowledgeCurationModule(KnowledgeCurationModule):
     def __init__(
         self,
         retriever: Retriever,
-        persona_generator: Optional[StormPersonaGenerator],
-        conv_simulator_lm: Union[dspy.dsp.LM, dspy.dsp.HFModel],
-        question_asker_lm: Union[dspy.dsp.LM, dspy.dsp.HFModel],
+        persona_generator: StormPersonaGenerator | None,
+        conv_simulator_lm: dspy.dsp.LM | dspy.dsp.HFModel,
+        question_asker_lm: dspy.dsp.LM | dspy.dsp.HFModel,
         max_search_queries_per_turn: int,
         search_top_k: int,
         max_conv_turn: int,
@@ -273,7 +249,6 @@ class StormKnowledgeCurationModule(KnowledgeCurationModule):
         self.conv_simulator_lm = conv_simulator_lm
         self.search_top_k = search_top_k
         self.max_thread_num = max_thread_num
-        self.retriever = retriever
         self.conv_simulator = ConvSimulator(
             topic_expert_engine=conv_simulator_lm,
             question_asker_engine=question_asker_lm,
@@ -283,10 +258,8 @@ class StormKnowledgeCurationModule(KnowledgeCurationModule):
             max_turn=max_conv_turn,
         )
 
-    def _get_considered_personas(self, topic: str, max_num_persona) -> List[str]:
-        return self.persona_generator.generate_persona(
-            topic=topic, max_num_persona=max_num_persona
-        )
+    def _get_considered_personas(self, topic: str, max_num_persona) -> list[str]:
+        return self.persona_generator.generate_persona(topic=topic, max_num_persona=max_num_persona)
 
     def _run_conversation(
         self,
@@ -295,7 +268,7 @@ class StormKnowledgeCurationModule(KnowledgeCurationModule):
         ground_truth_url,
         considered_personas,
         callback_handler: BaseCallbackHandler,
-    ) -> List[Tuple[str, List[DialogueTurn]]]:
+    ) -> list[tuple[str, list[DialogueTurn]]]:
         """
         Executes multiple conversation simulations concurrently, each with a different persona,
         and collects their dialog histories. The dialog history of each conversation is cleaned
@@ -330,10 +303,7 @@ class StormKnowledgeCurationModule(KnowledgeCurationModule):
         max_workers = min(self.max_thread_num, len(considered_personas))
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_persona = {
-                executor.submit(run_conv, persona): persona
-                for persona in considered_personas
-            }
+            future_to_persona = {executor.submit(run_conv, persona): persona for persona in considered_personas}
 
             if streamlit_connection:
                 # Ensure the logging context is correct when connecting with Streamlit frontend.
@@ -343,9 +313,7 @@ class StormKnowledgeCurationModule(KnowledgeCurationModule):
             for future in as_completed(future_to_persona):
                 persona = future_to_persona[future]
                 conv = future.result()
-                conversations.append(
-                    (persona, ArticleTextProcessing.clean_up_citation(conv).dlg_history)
-                )
+                conversations.append((persona, ArticleTextProcessing.clean_up_citation(conv).dlg_history))
 
         return conversations
 
@@ -357,7 +325,7 @@ class StormKnowledgeCurationModule(KnowledgeCurationModule):
         max_perspective: int = 0,
         disable_perspective: bool = True,
         return_conversation_log=False,
-    ) -> Union[StormInformationTable, Tuple[StormInformationTable, Dict]]:
+    ) -> StormInformationTable | tuple[StormInformationTable, dict]:
         """
         Curate information and knowledge for the given topic
 
@@ -374,9 +342,7 @@ class StormKnowledgeCurationModule(KnowledgeCurationModule):
         if disable_perspective:
             considered_personas = [""]
         else:
-            considered_personas = self._get_considered_personas(
-                topic=topic, max_num_persona=max_perspective
-            )
+            considered_personas = self._get_considered_personas(topic=topic, max_num_persona=max_perspective)
         callback_handler.on_identify_perspective_end(perspectives=considered_personas)
 
         # run conversation
@@ -392,7 +358,5 @@ class StormKnowledgeCurationModule(KnowledgeCurationModule):
         information_table = StormInformationTable(conversations)
         callback_handler.on_information_gathering_end()
         if return_conversation_log:
-            return information_table, StormInformationTable.construct_log_dict(
-                conversations
-            )
+            return information_table, StormInformationTable.construct_log_dict(conversations)
         return information_table

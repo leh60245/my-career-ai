@@ -1,13 +1,3 @@
-"""
-Analysis Report Pydantic Schemas
-
-API request/response validation schemas for AnalysisReport model.
-
-Author: Enterprise Architecture Team
-Created: 2026-01-21
-Version: 1.0.0
-"""
-
 from datetime import datetime
 from typing import Any
 
@@ -18,15 +8,11 @@ class AnalysisReportBase(BaseModel):
     """Base schema for AnalysisReport (shared fields)"""
 
     title: str = Field(..., max_length=500, description="Report title")
-    rcept_no: str = Field(
-        ..., max_length=20, description="DART receipt number (unique)"
-    )
+    rcept_no: str = Field(..., max_length=20, description="DART receipt number (unique)")
     rcept_dt: str = Field(..., max_length=10, description="Receipt date (YYYYMMDD)")
     report_type: str = Field(default="annual", max_length=50, description="Report type")
     basic_info: dict[str, Any] | None = Field(None, description="Additional metadata")
-    status: str = Field(
-        default="Raw_Loaded", max_length=50, description="Processing status"
-    )
+    status: str = Field(default="Raw_Loaded", max_length=50, description="Processing status")
 
 
 class AnalysisReportCreate(AnalysisReportBase):

@@ -1,14 +1,3 @@
-"""
-Base Schemas - Common request/response patterns
-
-Provides reusable schemas for pagination, error handling, and common patterns
-used across all API endpoints.
-
-Author: Enterprise Architecture Team
-Created: 2026-01-21
-Version: 1.0.0
-"""
-
 from datetime import UTC, datetime
 from typing import Generic, TypeVar
 
@@ -81,9 +70,7 @@ class ErrorResponse(BaseModel):
     error: str = Field(..., description="Error type/category")
     message: str = Field(..., description="Human-readable error message")
     status_code: int = Field(..., ge=400, le=599, description="HTTP status code")
-    timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(UTC), description="Error occurrence time"
-    )
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Error occurrence time")
     details: dict | None = Field(None, description="Additional error context")
 
     class Config:
