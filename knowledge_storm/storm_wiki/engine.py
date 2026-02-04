@@ -2,20 +2,20 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Union, Literal, Optional
+from typing import Literal
 
 import dspy
 
+from ..interface import Engine, LMConfigs, Retriever
+from ..lm import LitellmModel
+from ..utils import FileIOHelper, makeStringRed, truncate_filename
 from .modules.article_generation import StormArticleGenerationModule
 from .modules.article_polish import StormArticlePolishingModule
 from .modules.callback import BaseCallbackHandler
 from .modules.knowledge_curation import StormKnowledgeCurationModule
 from .modules.outline_generation import StormOutlineGenerationModule
 from .modules.persona_generator import StormPersonaGenerator
-from .modules.storm_dataclass import StormInformationTable, StormArticle
-from ..interface import Engine, LMConfigs, Retriever
-from ..lm import LitellmModel
-from ..utils import FileIOHelper, makeStringRed, truncate_filename
+from .modules.storm_dataclass import StormArticle, StormInformationTable
 
 
 class STORMWikiLMConfigs(LMConfigs):
@@ -27,9 +27,7 @@ class STORMWikiLMConfigs(LMConfigs):
     """
 
     def __init__(self):
-        self.conv_simulator_lm = (
-            None  # LLM used in conversation simulator except for question asking.
-        )
+        self.conv_simulator_lm = None  # LLM used in conversation simulator except for question asking.
         self.question_asker_lm = None  # LLM used in question asking.
         self.outline_gen_lm = None  # LLM used in outline generation.
         self.article_gen_lm = None  # LLM used in article generation.
@@ -40,10 +38,10 @@ class STORMWikiLMConfigs(LMConfigs):
         openai_api_key: str,
         azure_api_key: str,
         openai_type: Literal["openai", "azure"],
-        api_base: Optional[str] = None,
-        api_version: Optional[str] = None,
-        temperature: Optional[float] = 1.0,
-        top_p: Optional[float] = 0.9,
+        api_base: str | None = None,
+        api_version: str | None = None,
+        temperature: float | None = 1.0,
+        top_p: float | None = 0.9,
     ):
         """Legacy: Corresponding to the original setup in the NAACL'24 paper."""
         azure_kwargs = {
@@ -61,26 +59,14 @@ class STORMWikiLMConfigs(LMConfigs):
             "api_base": None,
         }
         if openai_type and openai_type == "openai":
-            self.conv_simulator_lm = LitellmModel(
-                model="gpt-4o-mini-2024-07-18", max_tokens=500, **openai_kwargs
-            )
-            self.question_asker_lm = LitellmModel(
-                model="gpt-4o-mini-2024-07-18", max_tokens=500, **openai_kwargs
-            )
+            self.conv_simulator_lm = LitellmModel(model="gpt-4o-mini-2024-07-18", max_tokens=500, **openai_kwargs)
+            self.question_asker_lm = LitellmModel(model="gpt-4o-mini-2024-07-18", max_tokens=500, **openai_kwargs)
             # 1/12/2024: Update gpt-4 to gpt-4-1106-preview. (Currently keep the original setup when using azure.)
-            self.outline_gen_lm = LitellmModel(
-                model="gpt-4-0125-preview", max_tokens=400, **openai_kwargs
-            )
-            self.article_gen_lm = LitellmModel(
-                model="gpt-4o-2024-05-13", max_tokens=700, **openai_kwargs
-            )
-            self.article_polish_lm = LitellmModel(
-                model="gpt-4o-2024-05-13", max_tokens=4000, **openai_kwargs
-            )
+            self.outline_gen_lm = LitellmModel(model="gpt-4-0125-preview", max_tokens=400, **openai_kwargs)
+            self.article_gen_lm = LitellmModel(model="gpt-4o-2024-05-13", max_tokens=700, **openai_kwargs)
+            self.article_polish_lm = LitellmModel(model="gpt-4o-2024-05-13", max_tokens=4000, **openai_kwargs)
         elif openai_type and openai_type == "azure":
-            self.conv_simulator_lm = LitellmModel(
-                model="azure/gpt-4o-mini-2024-07-18", max_tokens=500, **openai_kwargs
-            )
+            self.conv_simulator_lm = LitellmModel(model="azure/gpt-4o-mini-2024-07-18", max_tokens=500, **openai_kwargs)
             self.question_asker_lm = LitellmModel(
                 model="azure/gpt-4o-mini-2024-07-18",
                 max_tokens=500,
@@ -88,9 +74,7 @@ class STORMWikiLMConfigs(LMConfigs):
                 model_type="chat",
             )
             # use combination of openai and azure-openai as azure-openai does not support gpt-4 in standard deployment
-            self.outline_gen_lm = LitellmModel(
-                model="azure/gpt-4o", max_tokens=400, **azure_kwargs, model_type="chat"
-            )
+            self.outline_gen_lm = LitellmModel(model="azure/gpt-4o", max_tokens=400, **azure_kwargs, model_type="chat")
             self.article_gen_lm = LitellmModel(
                 model="azure/gpt-4o-mini-2024-07-18",
                 max_tokens=700,
@@ -104,23 +88,21 @@ class STORMWikiLMConfigs(LMConfigs):
                 model_type="chat",
             )
         else:
-            logging.warning(
-                "No valid OpenAI API provider is provided. Cannot use default LLM configurations."
-            )
+            logging.warning("No valid OpenAI API provider is provided. Cannot use default LLM configurations.")
 
-    def set_conv_simulator_lm(self, model: Union[dspy.dsp.LM, dspy.dsp.HFModel]):
+    def set_conv_simulator_lm(self, model: dspy.dsp.LM | dspy.dsp.HFModel):
         self.conv_simulator_lm = model
 
-    def set_question_asker_lm(self, model: Union[dspy.dsp.LM, dspy.dsp.HFModel]):
+    def set_question_asker_lm(self, model: dspy.dsp.LM | dspy.dsp.HFModel):
         self.question_asker_lm = model
 
-    def set_outline_gen_lm(self, model: Union[dspy.dsp.LM, dspy.dsp.HFModel]):
+    def set_outline_gen_lm(self, model: dspy.dsp.LM | dspy.dsp.HFModel):
         self.outline_gen_lm = model
 
-    def set_article_gen_lm(self, model: Union[dspy.dsp.LM, dspy.dsp.HFModel]):
+    def set_article_gen_lm(self, model: dspy.dsp.LM | dspy.dsp.HFModel):
         self.article_gen_lm = model
 
-    def set_article_polish_lm(self, model: Union[dspy.dsp.LM, dspy.dsp.HFModel]):
+    def set_article_polish_lm(self, model: dspy.dsp.LM | dspy.dsp.HFModel):
         self.article_polish_lm = model
 
 
@@ -133,15 +115,11 @@ class STORMWikiRunnerArguments:
     )
     max_conv_turn: int = field(
         default=3,
-        metadata={
-            "help": "Maximum number of questions in conversational question asking."
-        },
+        metadata={"help": "Maximum number of questions in conversational question asking."},
     )
     max_perspective: int = field(
         default=3,
-        metadata={
-            "help": "Maximum number of perspectives to consider in perspective-guided question asking."
-        },
+        metadata={"help": "Maximum number of perspectives to consider in perspective-guided question asking."},
     )
     max_search_queries_per_turn: int = field(
         default=3,
@@ -171,17 +149,13 @@ class STORMWikiRunnerArguments:
 class STORMWikiRunner(Engine):
     """STORM Wiki pipeline runner."""
 
-    def __init__(
-        self, args: STORMWikiRunnerArguments, lm_configs: STORMWikiLMConfigs, rm
-    ):
+    def __init__(self, args: STORMWikiRunnerArguments, lm_configs: STORMWikiLMConfigs, rm):
         super().__init__(lm_configs=lm_configs)
         self.args = args
         self.lm_configs = lm_configs
 
         self.retriever = Retriever(rm=rm, max_thread=self.args.max_thread_num)
-        storm_persona_generator = StormPersonaGenerator(
-            self.lm_configs.question_asker_lm
-        )
+        storm_persona_generator = StormPersonaGenerator(self.lm_configs.question_asker_lm)
         self.storm_knowledge_curation_module = StormKnowledgeCurationModule(
             retriever=self.retriever,
             persona_generator=storm_persona_generator,
@@ -229,9 +203,7 @@ class STORMWikiRunner(Engine):
             conversation_log,
             os.path.join(self.article_output_dir, "conversation_log.json"),
         )
-        information_table.dump_url_to_info(
-            os.path.join(self.article_output_dir, "raw_search_results.json")
-        )
+        information_table.dump_url_to_info(os.path.join(self.article_output_dir, "raw_search_results.json"))
         return information_table
 
     def run_outline_generation_module(
@@ -245,12 +217,8 @@ class STORMWikiRunner(Engine):
             return_draft_outline=True,
             callback_handler=callback_handler,
         )
-        outline.dump_outline_to_file(
-            os.path.join(self.article_output_dir, "storm_gen_outline.txt")
-        )
-        draft_outline.dump_outline_to_file(
-            os.path.join(self.article_output_dir, "direct_gen_outline.txt")
-        )
+        outline.dump_outline_to_file(os.path.join(self.article_output_dir, "storm_gen_outline.txt"))
+        draft_outline.dump_outline_to_file(os.path.join(self.article_output_dir, "direct_gen_outline.txt"))
         return outline
 
     def run_article_generation_module(
@@ -265,17 +233,11 @@ class STORMWikiRunner(Engine):
             article_with_outline=outline,
             callback_handler=callback_handler,
         )
-        draft_article.dump_article_as_plain_text(
-            os.path.join(self.article_output_dir, "storm_gen_article.txt")
-        )
-        draft_article.dump_reference_to_file(
-            os.path.join(self.article_output_dir, "url_to_info.json")
-        )
+        draft_article.dump_article_as_plain_text(os.path.join(self.article_output_dir, "storm_gen_article.txt"))
+        draft_article.dump_reference_to_file(os.path.join(self.article_output_dir, "url_to_info.json"))
         return draft_article
 
-    def run_article_polishing_module(
-        self, draft_article: StormArticle, remove_duplicate: bool = False
-    ) -> StormArticle:
+    def run_article_polishing_module(self, draft_article: StormArticle, remove_duplicate: bool = False) -> StormArticle:
         polished_article = self.storm_article_polishing_module.polish_article(
             topic=self.topic,
             draft_article=draft_article,
@@ -294,28 +256,20 @@ class STORMWikiRunner(Engine):
         2. Dumping the LLM call history.
         """
         config_log = self.lm_configs.log()
-        FileIOHelper.dump_json(
-            config_log, os.path.join(self.article_output_dir, "run_config.json")
-        )
+        FileIOHelper.dump_json(config_log, os.path.join(self.article_output_dir, "run_config.json"))
 
         llm_call_history = self.lm_configs.collect_and_reset_lm_history()
-        with open(
-            os.path.join(self.article_output_dir, "llm_call_history.jsonl"), "w"
-        ) as f:
+        with open(os.path.join(self.article_output_dir, "llm_call_history.jsonl"), "w") as f:
             for call in llm_call_history:
                 if "kwargs" in call:
-                    call.pop(
-                        "kwargs"
-                    )  # All kwargs are dumped together to run_config.json.
+                    call.pop("kwargs")  # All kwargs are dumped together to run_config.json.
                 f.write(json.dumps(call) + "\n")
 
     def _load_information_table_from_local_fs(self, information_table_local_path):
         assert os.path.exists(information_table_local_path), makeStringRed(
             f"{information_table_local_path} not exists. Please set --do-research argument to prepare the conversation_log.json for this topic."
         )
-        return StormInformationTable.from_conversation_log_file(
-            information_table_local_path
-        )
+        return StormInformationTable.from_conversation_log_file(information_table_local_path)
 
     def _load_outline_from_local_fs(self, topic, outline_local_path):
         assert os.path.exists(outline_local_path), makeStringRed(
@@ -323,9 +277,7 @@ class STORMWikiRunner(Engine):
         )
         return StormArticle.from_outline_file(topic=topic, file_path=outline_local_path)
 
-    def _load_draft_article_from_local_fs(
-        self, topic, draft_article_path, url_to_info_path
-    ):
+    def _load_draft_article_from_local_fs(self, topic, draft_article_path, url_to_info_path):
         assert os.path.exists(draft_article_path), makeStringRed(
             f"{draft_article_path} not exists. Please set --do-generate-article argument to prepare the storm_gen_article.txt for this topic."
         )
@@ -334,9 +286,7 @@ class STORMWikiRunner(Engine):
         )
         article_text = FileIOHelper.load_str(draft_article_path)
         references = FileIOHelper.load_json(url_to_info_path)
-        return StormArticle.from_string(
-            topic_name=topic, article_text=article_text, references=references
-        )
+        return StormArticle.from_string(topic_name=topic, article_text=article_text, references=references)
 
     def run(
         self,
@@ -366,22 +316,13 @@ class STORMWikiRunner(Engine):
             remove_duplicate: If True, remove duplicated content.
             callback_handler: A callback handler to handle the intermediate results.
         """
-        assert (
-            do_research
-            or do_generate_outline
-            or do_generate_article
-            or do_polish_article
-        ), makeStringRed(
+        assert do_research or do_generate_outline or do_generate_article or do_polish_article, makeStringRed(
             "No action is specified. Please set at least one of --do-research, --do-generate-outline, --do-generate-article, --do-polish-article"
         )
 
         self.topic = topic
-        self.article_dir_name = truncate_filename(
-            topic.replace(" ", "_").replace("/", "_")
-        )
-        self.article_output_dir = os.path.join(
-            self.args.output_dir, self.article_dir_name
-        )
+        self.article_dir_name = truncate_filename(topic.replace(" ", "_").replace("/", "_"))
+        self.article_output_dir = os.path.join(self.args.output_dir, self.article_dir_name)
         os.makedirs(self.article_output_dir, exist_ok=True)
 
         # research module
@@ -412,9 +353,7 @@ class STORMWikiRunner(Engine):
             if outline is None:
                 outline = self._load_outline_from_local_fs(
                     topic=topic,
-                    outline_local_path=os.path.join(
-                        self.article_output_dir, "storm_gen_outline.txt"
-                    ),
+                    outline_local_path=os.path.join(self.article_output_dir, "storm_gen_outline.txt"),
                 )
             draft_article = self.run_article_generation_module(
                 outline=outline,
@@ -425,17 +364,11 @@ class STORMWikiRunner(Engine):
         # article polishing module
         if do_polish_article:
             if draft_article is None:
-                draft_article_path = os.path.join(
-                    self.article_output_dir, "storm_gen_article.txt"
-                )
-                url_to_info_path = os.path.join(
-                    self.article_output_dir, "url_to_info.json"
-                )
+                draft_article_path = os.path.join(self.article_output_dir, "storm_gen_article.txt")
+                url_to_info_path = os.path.join(self.article_output_dir, "url_to_info.json")
                 draft_article = self._load_draft_article_from_local_fs(
                     topic=topic,
                     draft_article_path=draft_article_path,
                     url_to_info_path=url_to_info_path,
                 )
-            self.run_article_polishing_module(
-                draft_article=draft_article, remove_duplicate=remove_duplicate
-            )
+            self.run_article_polishing_module(draft_article=draft_article, remove_duplicate=remove_duplicate)

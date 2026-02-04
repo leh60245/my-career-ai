@@ -14,9 +14,7 @@ class YouRM(dspy.Retrieve):
     def __init__(self, ydc_api_key=None, k=3, is_valid_source: Callable = None):
         super().__init__(k=k)
         if not ydc_api_key and not os.environ.get("YDC_API_KEY"):
-            raise RuntimeError(
-                "You must supply ydc_api_key or set environment variable YDC_API_KEY"
-            )
+            raise RuntimeError("You must supply ydc_api_key or set environment variable YDC_API_KEY")
         elif ydc_api_key:
             self.ydc_api_key = ydc_api_key
         else:
@@ -35,9 +33,7 @@ class YouRM(dspy.Retrieve):
 
         return {"YouRM": usage}
 
-    def forward(
-        self, query_or_queries: str | list[str], exclude_urls: list[str] = []
-    ):
+    def forward(self, query_or_queries: str | list[str], exclude_urls: list[str] = []):
         """Search with You.com for self.k top passages for query or queries
 
         Args:
@@ -47,11 +43,7 @@ class YouRM(dspy.Retrieve):
         Returns:
             a list of Dicts, each dict has keys of 'description', 'snippets' (list of strings), 'title', 'url'
         """
-        queries = (
-            [query_or_queries]
-            if isinstance(query_or_queries, str)
-            else query_or_queries
-        )
+        queries = [query_or_queries] if isinstance(query_or_queries, str) else query_or_queries
         self.usage += len(queries)
         collected_results = []
         for query in queries:
@@ -125,9 +117,7 @@ class BingSearch(dspy.Retrieve):
 
         return {"BingSearch": usage}
 
-    def forward(
-        self, query_or_queries: str | list[str], exclude_urls: list[str] = []
-    ):
+    def forward(self, query_or_queries: str | list[str], exclude_urls: list[str] = []):
         """Search with Bing for self.k top passages for query or queries
 
         Args:
@@ -137,11 +127,7 @@ class BingSearch(dspy.Retrieve):
         Returns:
             a list of Dicts, each dict has keys of 'description', 'snippets' (list of strings), 'title', 'url'
         """
-        queries = (
-            [query_or_queries]
-            if isinstance(query_or_queries, str)
-            else query_or_queries
-        )
+        queries = [query_or_queries] if isinstance(query_or_queries, str) else query_or_queries
         self.usage += len(queries)
 
         url_to_results = {}
@@ -150,9 +136,7 @@ class BingSearch(dspy.Retrieve):
 
         for query in queries:
             try:
-                results = requests.get(
-                    self.endpoint, headers=headers, params={**self.params, "q": query}
-                ).json()
+                results = requests.get(self.endpoint, headers=headers, params={**self.params, "q": query}).json()
 
                 for d in results["webPages"]["value"]:
                     if self.is_valid_source(d["url"]) and d["url"] not in exclude_urls:
@@ -164,9 +148,7 @@ class BingSearch(dspy.Retrieve):
             except Exception as e:
                 logging.error(f"Error occurs when searching query {query}: {e}")
 
-        valid_url_to_snippets = self.webpage_helper.urls_to_snippets(
-            list(url_to_results.keys())
-        )
+        valid_url_to_snippets = self.webpage_helper.urls_to_snippets(list(url_to_results.keys()))
         collected_results = []
         for url in valid_url_to_snippets:
             r = url_to_results[url]
@@ -234,18 +216,14 @@ class VectorRM(dspy.Retrieve):
         if self.client is None:
             raise ValueError("Qdrant client is not initialized.")
         if self.client.collection_exists(collection_name=f"{self.collection_name}"):
-            print(
-                f"Collection {self.collection_name} exists. Loading the collection..."
-            )
+            print(f"Collection {self.collection_name} exists. Loading the collection...")
             self.qdrant = Qdrant(
                 client=self.client,
                 collection_name=self.collection_name,
                 embeddings=self.model,
             )
         else:
-            raise ValueError(
-                f"Collection {self.collection_name} does not exist. Please create the collection first."
-            )
+            raise ValueError(f"Collection {self.collection_name} does not exist. Please create the collection first.")
 
     def init_online_vector_db(self, url: str, api_key: str):
         from qdrant_client import QdrantClient
@@ -314,11 +292,7 @@ class VectorRM(dspy.Retrieve):
         Returns:
             a list of Dicts, each dict has keys of 'description', 'snippets' (list of strings), 'title', 'url'
         """
-        queries = (
-            [query_or_queries]
-            if isinstance(query_or_queries, str)
-            else query_or_queries
-        )
+        queries = [query_or_queries] if isinstance(query_or_queries, str) else query_or_queries
         self.usage += len(queries)
         collected_results = []
         for query in queries:
@@ -355,9 +329,7 @@ class StanfordOvalArxivRM(dspy.Retrieve):
     def _retrieve(self, query: str):
         payload = {"query": query, "num_blocks": self.k, "rerank": self.rerank}
 
-        response = requests.post(
-            self.endpoint, json=payload, headers={"Content-Type": "application/json"}
-        )
+        response = requests.post(self.endpoint, json=payload, headers={"Content-Type": "application/json"})
 
         # Check if the request was successful
         if response.status_code == 200:
@@ -380,19 +352,11 @@ class StanfordOvalArxivRM(dspy.Retrieve):
 
             return results
         else:
-            raise Exception(
-                f"Error: Unable to retrieve results. Status code: {response.status_code}"
-            )
+            raise Exception(f"Error: Unable to retrieve results. Status code: {response.status_code}")
 
-    def forward(
-        self, query_or_queries: str | list[str], exclude_urls: list[str] = []
-    ):
+    def forward(self, query_or_queries: str | list[str], exclude_urls: list[str] = []):
         collected_results = []
-        queries = (
-            [query_or_queries]
-            if isinstance(query_or_queries, str)
-            else query_or_queries
-        )
+        queries = [query_or_queries] if isinstance(query_or_queries, str) else query_or_queries
 
         for query in queries:
             try:
@@ -471,9 +435,7 @@ class SerperRM(dspy.Retrieve):
             "Content-Type": "application/json",
         }
 
-        response = requests.request(
-            "POST", self.search_url, headers=headers, json=query_params
-        )
+        response = requests.request("POST", self.search_url, headers=headers, json=query_params)
 
         if response == None:
             raise RuntimeError(
@@ -499,11 +461,7 @@ class SerperRM(dspy.Retrieve):
         Returns:
             a list of dictionaries, each dictionary has keys of 'description', 'snippets' (list of strings), 'title', 'url'
         """
-        queries = (
-            [query_or_queries]
-            if isinstance(query_or_queries, str)
-            else query_or_queries
-        )
+        queries = [query_or_queries] if isinstance(query_or_queries, str) else query_or_queries
 
         self.usage += len(queries)
         self.results = []
@@ -546,37 +504,26 @@ class SerperRM(dspy.Retrieve):
                 for organic in organic_results:
                     snippets = [organic.get("snippet")]
                     if self.ENABLE_EXTRA_SNIPPET_EXTRACTION:
-                        snippets.extend(
-                            valid_url_to_snippets.get(url, {}).get("snippets", [])
-                        )
+                        snippets.extend(valid_url_to_snippets.get(url, {}).get("snippets", []))
                     collected_results.append(
                         {
                             "snippets": snippets,
                             "title": organic.get("title"),
                             "url": organic.get("link"),
-                            "description": (
-                                knowledge_graph.get("description")
-                                if knowledge_graph is not None
-                                else ""
-                            ),
+                            "description": (knowledge_graph.get("description") if knowledge_graph is not None else ""),
                         }
                     )
             except:
                 continue
 
-        # 딕셔너리 리스트를 직접 반환 (YouRM, BingSearch와 동일)
         return collected_results
 
 
 class BraveRM(dspy.Retrieve):
-    def __init__(
-        self, brave_search_api_key=None, k=3, is_valid_source: Callable = None
-    ):
+    def __init__(self, brave_search_api_key=None, k=3, is_valid_source: Callable = None):
         super().__init__(k=k)
         if not brave_search_api_key and not os.environ.get("BRAVE_API_KEY"):
-            raise RuntimeError(
-                "You must supply brave_search_api_key or set environment variable BRAVE_API_KEY"
-            )
+            raise RuntimeError("You must supply brave_search_api_key or set environment variable BRAVE_API_KEY")
         elif brave_search_api_key:
             self.brave_search_api_key = brave_search_api_key
         else:
@@ -595,9 +542,7 @@ class BraveRM(dspy.Retrieve):
 
         return {"BraveRM": usage}
 
-    def forward(
-        self, query_or_queries: str | list[str], exclude_urls: list[str] = []
-    ):
+    def forward(self, query_or_queries: str | list[str], exclude_urls: list[str] = []):
         """Search with api.search.brave.com for self.k top passages for query or queries
 
         Args:
@@ -607,11 +552,7 @@ class BraveRM(dspy.Retrieve):
         Returns:
             a list of Dicts, each dict has keys of 'description', 'snippets' (list of strings), 'title', 'url'
         """
-        queries = (
-            [query_or_queries]
-            if isinstance(query_or_queries, str)
-            else query_or_queries
-        )
+        queries = [query_or_queries] if isinstance(query_or_queries, str) else query_or_queries
         self.usage += len(queries)
         collected_results = []
         for query in queries:
@@ -677,9 +618,7 @@ class SearXNG(dspy.Retrieve):
         self.usage = 0
         return {"SearXNG": usage}
 
-    def forward(
-        self, query_or_queries: str | list[str], exclude_urls: list[str] = []
-    ):
+    def forward(self, query_or_queries: str | list[str], exclude_urls: list[str] = []):
         """Search with SearxNG for self.k top passages for query or queries
 
         Args:
@@ -689,25 +628,15 @@ class SearXNG(dspy.Retrieve):
         Returns:
             a list of Dicts, each dict has keys of 'description', 'snippets' (list of strings), 'title', 'url'
         """
-        queries = (
-            [query_or_queries]
-            if isinstance(query_or_queries, str)
-            else query_or_queries
-        )
+        queries = [query_or_queries] if isinstance(query_or_queries, str) else query_or_queries
         self.usage += len(queries)
         collected_results = []
-        headers = (
-            {"Authorization": f"Bearer {self.searxng_api_key}"}
-            if self.searxng_api_key
-            else {}
-        )
+        headers = {"Authorization": f"Bearer {self.searxng_api_key}"} if self.searxng_api_key else {}
 
         for query in queries:
             try:
                 params = {"q": query, "format": "json"}
-                response = requests.get(
-                    self.searxng_api_url, headers=headers, params=params
-                )
+                response = requests.get(self.searxng_api_url, headers=headers, params=params)
                 results = response.json()
 
                 for r in results["results"]:
@@ -750,9 +679,7 @@ class DuckDuckGoSearchRM(dspy.Retrieve):
         try:
             from duckduckgo_search import DDGS
         except ImportError as err:
-            raise ImportError(
-                "Duckduckgo requires `pip install duckduckgo_search`."
-            ) from err
+            raise ImportError("Duckduckgo requires `pip install duckduckgo_search`.") from err
         self.k = k
         self.webpage_helper = WebPageHelper(
             min_char_count=min_char_count,
@@ -795,14 +722,10 @@ class DuckDuckGoSearchRM(dspy.Retrieve):
         giveup=giveup_hdlr,
     )
     def request(self, query: str):
-        results = self.ddgs.text(
-            query, max_results=self.k, backend=self.duck_duck_go_backend
-        )
+        results = self.ddgs.text(query, max_results=self.k, backend=self.duck_duck_go_backend)
         return results
 
-    def forward(
-        self, query_or_queries: str | list[str], exclude_urls: list[str] = []
-    ):
+    def forward(self, query_or_queries: str | list[str], exclude_urls: list[str] = []):
         """Search with DuckDuckGoSearch for self.k top passages for query or queries
         Args:
             query_or_queries (Union[str, List[str]]): The query or queries to search for.
@@ -810,11 +733,7 @@ class DuckDuckGoSearchRM(dspy.Retrieve):
         Returns:
             a list of Dicts, each dict has keys of 'description', 'snippets' (list of strings), 'title', 'url'
         """
-        queries = (
-            [query_or_queries]
-            if isinstance(query_or_queries, str)
-            else query_or_queries
-        )
+        queries = [query_or_queries] if isinstance(query_or_queries, str) else query_or_queries
         self.usage += len(queries)
 
         collected_results = []
@@ -884,9 +803,7 @@ class TavilySearchRM(dspy.Retrieve):
             raise ImportError("Tavily requires `pip install tavily-python`.") from err
 
         if not tavily_search_api_key and not os.environ.get("TAVILY_API_KEY"):
-            raise RuntimeError(
-                "You must supply tavily_search_api_key or set environment variable TAVILY_API_KEY"
-            )
+            raise RuntimeError("You must supply tavily_search_api_key or set environment variable TAVILY_API_KEY")
         elif tavily_search_api_key:
             self.tavily_search_api_key = tavily_search_api_key
         else:
@@ -918,9 +835,7 @@ class TavilySearchRM(dspy.Retrieve):
         self.usage = 0
         return {"TavilySearchRM": usage}
 
-    def forward(
-        self, query_or_queries: str | list[str], exclude_urls: list[str] = []
-    ):
+    def forward(self, query_or_queries: str | list[str], exclude_urls: list[str] = []):
         """Search with TavilySearch for self.k top passages for query or queries
         Args:
             query_or_queries (Union[str, List[str]]): The query or queries to search for.
@@ -928,11 +843,7 @@ class TavilySearchRM(dspy.Retrieve):
         Returns:
             a list of Dicts, each dict has keys of 'description', 'snippets' (list of strings), 'title', 'url'
         """
-        queries = (
-            [query_or_queries]
-            if isinstance(query_or_queries, str)
-            else query_or_queries
-        )
+        queries = [query_or_queries] if isinstance(query_or_queries, str) else query_or_queries
         self.usage += len(queries)
 
         collected_results = []
@@ -1009,21 +920,15 @@ class GoogleSearch(dspy.Retrieve):
         try:
             from googleapiclient.discovery import build
         except ImportError as err:
-            raise ImportError(
-                "GoogleSearch requires `pip install google-api-python-client`."
-            ) from err
+            raise ImportError("GoogleSearch requires `pip install google-api-python-client`.") from err
         if not google_search_api_key and not os.environ.get("GOOGLE_SEARCH_API_KEY"):
             raise RuntimeError(
                 "You must supply google_search_api_key or set the GOOGLE_SEARCH_API_KEY environment variable"
             )
         if not google_cse_id and not os.environ.get("GOOGLE_CSE_ID"):
-            raise RuntimeError(
-                "You must supply google_cse_id or set the GOOGLE_CSE_ID environment variable"
-            )
+            raise RuntimeError("You must supply google_cse_id or set the GOOGLE_CSE_ID environment variable")
 
-        self.google_search_api_key = (
-            google_search_api_key or os.environ["GOOGLE_SEARCH_API_KEY"]
-        )
+        self.google_search_api_key = google_search_api_key or os.environ["GOOGLE_SEARCH_API_KEY"]
         self.google_cse_id = google_cse_id or os.environ["GOOGLE_CSE_ID"]
 
         if is_valid_source:
@@ -1031,9 +936,7 @@ class GoogleSearch(dspy.Retrieve):
         else:
             self.is_valid_source = lambda x: True
 
-        self.service = build(
-            "customsearch", "v1", developerKey=self.google_search_api_key
-        )
+        self.service = build("customsearch", "v1", developerKey=self.google_search_api_key)
         self.webpage_helper = WebPageHelper(
             min_char_count=min_char_count,
             snippet_chunk_size=snippet_chunk_size,
@@ -1046,9 +949,7 @@ class GoogleSearch(dspy.Retrieve):
         self.usage = 0
         return {"GoogleSearch": usage}
 
-    def forward(
-        self, query_or_queries: str | list[str], exclude_urls: list[str] = []
-    ):
+    def forward(self, query_or_queries: str | list[str], exclude_urls: list[str] = []):
         """Search using Google Custom Search API for self.k top results for query or queries.
 
         Args:
@@ -1058,11 +959,7 @@ class GoogleSearch(dspy.Retrieve):
         Returns:
             A list of dicts, each dict has keys: 'title', 'url', 'snippet', 'description'.
         """
-        queries = (
-            [query_or_queries]
-            if isinstance(query_or_queries, str)
-            else query_or_queries
-        )
+        queries = [query_or_queries] if isinstance(query_or_queries, str) else query_or_queries
         self.usage += len(queries)
 
         url_to_results = {}
@@ -1080,10 +977,7 @@ class GoogleSearch(dspy.Retrieve):
                 )
 
                 for item in response.get("items", []):
-                    if (
-                        self.is_valid_source(item["link"])
-                        and item["link"] not in exclude_urls
-                    ):
+                    if self.is_valid_source(item["link"]) and item["link"] not in exclude_urls:
                         url_to_results[item["link"]] = {
                             "title": item["title"],
                             "url": item["link"],
@@ -1094,9 +988,7 @@ class GoogleSearch(dspy.Retrieve):
             except Exception as e:
                 logging.error(f"Error occurred while searching query {query}: {e}")
 
-        valid_url_to_snippets = self.webpage_helper.urls_to_snippets(
-            list(url_to_results.keys())
-        )
+        valid_url_to_snippets = self.webpage_helper.urls_to_snippets(list(url_to_results.keys()))
         collected_results = []
         for url in valid_url_to_snippets:
             r = url_to_results[url]
@@ -1119,7 +1011,7 @@ class AzureAISearch(dspy.Retrieve):
         azure_ai_search_url=None,
         azure_ai_search_index_name=None,
         k=3,
-        is_valid_source: Callable = None, # type: ignore
+        is_valid_source: Callable = None,
     ):
         """
         Params:
@@ -1139,13 +1031,9 @@ class AzureAISearch(dspy.Retrieve):
             from azure.core.credentials import AzureKeyCredential
             from azure.search.documents import SearchClient
         except ImportError as err:
-            raise ImportError(
-                "AzureAISearch requires `pip install azure-search-documents`."
-            ) from err
+            raise ImportError("AzureAISearch requires `pip install azure-search-documents`.") from err
 
-        if not azure_ai_search_api_key and not os.environ.get(
-            "AZURE_AI_SEARCH_API_KEY"
-        ):
+        if not azure_ai_search_api_key and not os.environ.get("AZURE_AI_SEARCH_API_KEY"):
             raise RuntimeError(
                 "You must supply azure_ai_search_api_key or set environment variable AZURE_AI_SEARCH_API_KEY"
             )
@@ -1155,17 +1043,13 @@ class AzureAISearch(dspy.Retrieve):
             self.azure_ai_search_api_key = os.environ["AZURE_AI_SEARCH_API_KEY"]
 
         if not azure_ai_search_url and not os.environ.get("AZURE_AI_SEARCH_URL"):
-            raise RuntimeError(
-                "You must supply azure_ai_search_url or set environment variable AZURE_AI_SEARCH_URL"
-            )
+            raise RuntimeError("You must supply azure_ai_search_url or set environment variable AZURE_AI_SEARCH_URL")
         elif azure_ai_search_url:
             self.azure_ai_search_url = azure_ai_search_url
         else:
             self.azure_ai_search_url = os.environ["AZURE_AI_SEARCH_URL"]
 
-        if not azure_ai_search_index_name and not os.environ.get(
-            "AZURE_AI_SEARCH_INDEX_NAME"
-        ):
+        if not azure_ai_search_index_name and not os.environ.get("AZURE_AI_SEARCH_INDEX_NAME"):
             raise RuntimeError(
                 "You must supply azure_ai_search_index_name or set environment variable AZURE_AI_SEARCH_INDEX_NAME"
             )
@@ -1188,9 +1072,7 @@ class AzureAISearch(dspy.Retrieve):
 
         return {"AzureAISearch": usage}
 
-    def forward(
-        self, query_or_queries: str | list[str], exclude_urls: list[str] = []
-    ):
+    def forward(self, query_or_queries: str | list[str], exclude_urls: list[str] = []):
         """Search with Azure Open AI for self.k top passages for query or queries
 
         Args:
@@ -1204,14 +1086,8 @@ class AzureAISearch(dspy.Retrieve):
             from azure.core.credentials import AzureKeyCredential
             from azure.search.documents import SearchClient
         except ImportError as err:
-            raise ImportError(
-                "AzureAISearch requires `pip install azure-search-documents`."
-            ) from err
-        queries = (
-            [query_or_queries]
-            if isinstance(query_or_queries, str)
-            else query_or_queries
-        )
+            raise ImportError("AzureAISearch requires `pip install azure-search-documents`.") from err
+        queries = [query_or_queries] if isinstance(query_or_queries, str) else query_or_queries
         self.usage += len(queries)
         collected_results = []
 
@@ -1237,381 +1113,3 @@ class AzureAISearch(dspy.Retrieve):
                 logging.error(f"Error occurs when searching query {query}: {e}")
 
         return collected_results
-
-
-class PostgresRM(dspy.Retrieve):
-    """
-    PostgreSQL 벡터 검색 기반 Retrieval Model for STORM
-
-    내부 PostgreSQL DB(Source_Materials 테이블)에서 pgvector를 활용하여
-    벡터 유사도 검색을 수행합니다. DART 보고서 데이터를 기반으로 검색합니다.
-
-    Attributes:
-        connector: PostgresConnector 인스턴스
-        k: 검색할 최대 결과 수
-        min_score: 최소 유사도 임계값
-        usage: 검색 호출 횟수 추적
-
-    Example:
-        >>> rm = PostgresRM(k=5, min_score=0.5)
-        >>> result = rm.forward("재무 현황")
-    """
-
-    def __init__(
-        self,
-        k: int = 5,
-        min_score: float = 0.5
-    ):
-        """
-        PostgresRM 초기화
-
-        Args:
-            k: 검색할 최대 결과 수 (기본값: 5)
-            min_score: 최소 유사도 임계값 (기본값: 0.5)
-
-        Raises:
-            RuntimeError: PostgresConnector 초기화 실패 시
-        """
-        super().__init__(k=k)
-
-        from .db import PostgresConnector
-
-        self.connector = PostgresConnector()
-        self.min_score = min_score
-        self.usage = 0
-
-        logging.info(
-            f"PostgresRM initialized with k={k}, min_score={min_score}"
-        )
-
-    def set_company_filter(self, company_name: str):
-        """
-        기업명 필터 동적 설정
-
-        Args:
-            company_name: 필터링할 기업명 (None이면 필터 해제)
-        """
-        self.company_filter = company_name
-        logging.info(f"PostgresRM company_filter updated to: {company_name}")
-
-    def get_usage_and_reset(self):
-        """
-        사용량 조회 및 리셋
-
-        Returns:
-            dict: {"PostgresRM": usage_count}
-        """
-        usage = self.usage
-        self.usage = 0
-        return {"PostgresRM": usage}
-
-    def forward(
-        self,
-        query_or_queries: str | list[str],
-        exclude_urls: list[str] = [],
-        k: int = None # type: ignore
-    ):
-        """
-        STORM 엔진에서 호출하는 검색 메서드
-
-        Args:
-            query_or_queries: 검색 쿼리 (단일 문자열 또는 문자열 리스트)
-            exclude_urls: 제외할 URL 리스트 (STORM 인터페이스 호환용, 현재 미사용)
-            k: 검색 결과 수 (None이면 self.k 사용)
-
-        Returns:
-            dspy.Prediction: passages 필드에 검색 결과 리스트 포함
-                - 각 결과는 {'content', 'title', 'url', 'score'} 형태
-        """
-        # 검색 개수 결정
-        search_k = k if k is not None else self.k
-
-        # 단일 쿼리를 리스트로 변환
-        queries = (
-            [query_or_queries]
-            if isinstance(query_or_queries, str)
-            else query_or_queries
-        )
-
-        self.usage += len(queries)
-        collected_results = []
-        low_score_count = 0
-
-        for query in queries:
-            try:
-                # PostgresConnector를 통한 벡터 검색
-                results = self.connector.search(
-                    query,
-                    top_k=search_k
-                )
-
-                for result in results:
-                    # 최소 점수 체크
-                    if result.get('score', 0) < self.min_score:
-                        low_score_count += 1
-
-                    # STORM 호환 포맷으로 변환 (딕셔너리 형태)
-                    entry = {
-                        "content": result.get("content", ""),
-                        "snippets": [result.get("content", "")],  # STORM 필수
-                        "title": result.get("title", "No Title"),
-                        "url": result.get("url", "local_db"),
-                        "description": result.get("title", ""),
-                        "score": result.get("score", 0.0)
-                    }
-
-                    # 딕셔너리 그대로 추가 (dspy.Prediction으로 감싸지 않음)
-                    collected_results.append(entry)
-
-            except Exception as e:
-                logging.error(f"Error occurs when searching query '{query}': {e}")
-
-        # 낮은 점수 결과에 대한 경고 로그
-        if low_score_count > 0:
-            logging.warning(
-                f"PostgresRM: {low_score_count}/{len(collected_results)} results "
-                f"have score below min_score threshold ({self.min_score})."
-            )
-
-        logging.info(f"PostgresRM: Found {len(collected_results)} results for {len(queries)} queries")
-
-        # 딕셔너리 리스트를 직접 반환 (YouRM, BingSearch와 동일)
-        return collected_results
-
-    def close(self):
-        """PostgresConnector 연결 종료"""
-        if self.connector:
-            self.connector.close()
-
-
-class HybridRM(dspy.Retrieve):
-    """
-    Hybrid Retrieval Model - 내부 DB와 외부 검색을 혼합하는 검색 모듈
-
-    DART 내부 검색(PostgresRM)과 Google 외부 검색(SerperRM)을 조합하여,
-    Fact(과거 데이터)와 Trend(최신 뉴스)를 동시에 확보합니다.
-
-    Architecture Pattern: Composition (조립)
-    - PostgresRM과 SerperRM 인스턴스를 내부적으로 보유
-    - 두 검색 결과를 internal_k:external_k 비율로 혼합
-
-    Default Ratio: Internal(3) : External(7)
-    - 내부 검색: 높은 신뢰도의 DART 보고서 데이터
-    - 외부 검색: 최신 시장 동향 및 뉴스
-
-    Attributes:
-        internal_rm: PostgresRM 인스턴스 (DART 내부 검색)
-        external_rm: SerperRM 인스턴스 (Google 외부 검색)
-        internal_k: 내부 검색 결과 개수 (Default: 3)
-        external_k: 외부 검색 결과 개수 (Default: 7)
-        usage: 검색 호출 횟수 추적
-
-    Example:
-        >>> internal_rm = PostgresRM(k=10, company_filter="삼성전자")
-        >>> external_rm = SerperRM(serper_search_api_key="xxx", k=10)
-        >>> hybrid_rm = HybridRM(internal_rm, external_rm, internal_k=3, external_k=7)
-        >>> result = hybrid_rm.forward("HBM 시장 전망")
-        >>> # 내부 3개 + 외부 7개 = 총 10개 결과 반환
-    """
-
-    def __init__(
-        self,
-        internal_rm,
-        external_rm,
-        internal_k: int = 3,
-        external_k: int = 7
-    ):
-        """
-        HybridRM 초기화
-
-        Args:
-            internal_rm: PostgresRM 인스턴스 (내부 DART 검색)
-            external_rm: SerperRM 인스턴스 (외부 Google 검색)
-            internal_k: 내부 검색 결과 개수 (Default: 3)
-            external_k: 외부 검색 결과 개수 (Default: 7)
-
-        Raises:
-            ValueError: internal_rm 또는 external_rm이 None인 경우
-        """
-        if internal_rm is None or external_rm is None:
-            raise ValueError("Both internal_rm and external_rm must be provided")
-
-        # dspy.Retrieve 초기화: 전체 k는 internal_k + external_k
-        super().__init__(k=internal_k + external_k)
-
-        self.internal_rm = internal_rm
-        self.external_rm = external_rm
-        self.internal_k = internal_k
-        self.external_k = external_k
-        self.usage = 0
-
-        logging.info(
-            f"HybridRM initialized with internal_k={internal_k}, external_k={external_k} "
-            f"(Total k={self.k})"
-        )
-
-    def get_usage_and_reset(self):
-        """
-        사용량 조회 및 리셋
-
-        Returns:
-            dict: {"HybridRM": usage_count, "PostgresRM": ..., "SerperRM": ...}
-        """
-        usage = self.usage
-        self.usage = 0
-
-        # 내부/외부 RM의 사용량도 함께 조회
-        internal_usage = self.internal_rm.get_usage_and_reset()
-        external_usage = self.external_rm.get_usage_and_reset()
-
-        return {
-            "HybridRM": usage,
-            **internal_usage,
-            **external_usage
-        }
-
-    def forward(
-        self,
-        query_or_queries: str | list[str],
-        exclude_urls: list[str] = []
-    ):
-        """
-        하이브리드 검색 수행: 내부 + 외부 결과 혼합
-
-        Process:
-        1. 쿼리 정규화 (str → List[str])
-        2. 각 쿼리별로:
-           a) 내부 검색 (PostgresRM) - Fallback 처리
-           b) 외부 검색 (SerperRM) - Fallback 처리
-           c) 결과 혼합 (중복 제거)
-        3. dspy.Prediction 형태로 반환
-
-        Args:
-            query_or_queries: 검색 쿼리 (단일 문자열 또는 문자열 리스트)
-            exclude_urls: 제외할 URL 리스트 (외부 검색에 전달)
-
-        Returns:
-            dspy.Prediction: passages 필드에 검색 결과 리스트 포함
-                - 각 결과는 {'content', 'title', 'url', 'score', 'source'} 형태
-                - source: 'internal' 또는 'external'
-
-        Note:
-            - 내부/외부 검색 실패 시 에러 로그를 남기고 빈 리스트로 처리
-            - 중복 제거는 URL 기준으로 수행 (외부 우선)
-        """
-        # 쿼리 정규화
-        queries = (
-            [query_or_queries]
-            if isinstance(query_or_queries, str)
-            else query_or_queries
-        )
-
-        self.usage += len(queries)
-        final_results = []
-
-        for query in queries:
-            logging.info(f"[HybridRM] Processing query: {query}")
-
-            # 1. 내부 검색 (DART) - Fallback 처리 필수
-            internal_results = []
-            try:
-                logging.info(f"[HybridRM] Internal search (k={self.internal_k})...")
-                i_res = self.internal_rm.forward(query, exclude_urls=exclude_urls)
-
-                # dspy.Prediction 객체인 경우 passages 추출
-                if hasattr(i_res, 'passages'):
-                    i_res = i_res.passages
-
-                # 리스트가 아닌 경우 리스트로 변환
-                if not isinstance(i_res, list):
-                    i_res = [i_res] if i_res else []
-
-                # internal_k 개수만큼만 가져오기
-                internal_results = i_res[:self.internal_k]
-
-                # source 태그 추가
-                for item in internal_results:
-                    if isinstance(item, dict):
-                        item['source'] = 'internal'
-
-                logging.info(f"[HybridRM] Internal search returned {len(internal_results)} results")
-
-            except Exception as e:
-                logging.error(f"[HybridRM] Internal search error: {e}")
-                internal_results = []
-
-            # 2. 외부 검색 (Serper)
-            external_results = []
-            try:
-                logging.info(f"[HybridRM] External search (k={self.external_k})...")
-                e_res = self.external_rm.forward(query, exclude_urls=exclude_urls)
-
-                # dspy.Prediction 객체인 경우 passages 추출
-                if hasattr(e_res, 'passages'):
-                    e_res = e_res.passages
-
-                # 리스트가 아닌 경우 리스트로 변환
-                if not isinstance(e_res, list):
-                    e_res = [e_res] if e_res else []
-
-                # external_k 개수만큼만 가져오기
-                external_results = e_res[:self.external_k]
-
-                # source 태그 추가
-                for item in external_results:
-                    if isinstance(item, dict):
-                        item['source'] = 'external'
-
-                logging.info(f"[HybridRM] External search returned {len(external_results)} results")
-
-            except Exception as e:
-                logging.error(f"[HybridRM] External search error: {e}")
-                external_results = []
-
-            # 3. 병합 (Merge) - 중복 제거 로직 (URL 기준)
-            seen_urls = set()
-            merged_results = []
-
-            # 내부 결과 먼저 추가 (우선순위)
-            for item in internal_results:
-                if isinstance(item, dict):
-                    url = item.get('url', '')
-                    if url and url not in seen_urls:
-                        seen_urls.add(url)
-                        merged_results.append(item)
-                    elif not url:
-                        # URL이 없는 경우도 추가 (DART 청크 등)
-                        merged_results.append(item)
-
-            # 외부 결과 추가
-            for item in external_results:
-                if isinstance(item, dict):
-                    url = item.get('url', '')
-                    if url and url not in seen_urls:
-                        seen_urls.add(url)
-                        merged_results.append(item)
-                    elif not url:
-                        merged_results.append(item)
-
-            final_results.extend(merged_results)
-
-            logging.info(
-                f"[HybridRM] Query '{query}' completed: "
-                f"{len(internal_results)} internal + {len(external_results)} external "
-                f"= {len(merged_results)} total (after dedup)"
-            )
-
-        # 딕셔너리 리스트를 직접 반환 (YouRM, PostgresRM, SerperRM과 동일)
-        logging.info(f"[HybridRM] Total results across all queries: {len(final_results)}")
-        return final_results
-
-    def close(self):
-        """
-        내부/외부 RM의 연결 종료 (있는 경우)
-        """
-        if hasattr(self.internal_rm, 'close'):
-            self.internal_rm.close()
-        if hasattr(self.external_rm, 'close'):
-            self.external_rm.close()
-        logging.info("HybridRM connections closed")
-
