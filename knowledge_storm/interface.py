@@ -1,5 +1,4 @@
 import concurrent.futures
-import dspy
 import functools
 import hashlib
 import json
@@ -7,13 +6,13 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from typing import Dict, List, Optional, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING
+
+import dspy
 
 from .utils import ArticleTextProcessing
 
-logging.basicConfig(
-    level=logging.INFO, format="%(name)s : %(levelname)-8s : %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(name)s : %(levelname)-8s : %(message)s")
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -163,9 +162,7 @@ class Article(ABC):
     def __init__(self, topic_name):
         self.root = ArticleSectionNode(topic_name)
 
-    def find_section(
-        self, node: ArticleSectionNode, name: str
-    ) -> Optional[ArticleSectionNode]:
+    def find_section(self, node: ArticleSectionNode, name: str) -> ArticleSectionNode | None:
         """
         Return the node of the section given the section name.
 
@@ -221,7 +218,7 @@ class Article(ABC):
             }
         """
 
-        def build_tree(node) -> Dict[str, Dict]:
+        def build_tree(node) -> dict[str, dict]:
             tree = {}
             for child in node.children:
                 tree[child.section_name] = build_tree(child)
@@ -229,7 +226,7 @@ class Article(ABC):
 
         return build_tree(self.root)
 
-    def get_first_level_section_names(self) -> List[str]:
+    def get_first_level_section_names(self) -> list[str]:
         """
         Get first level section names
         """
@@ -247,9 +244,7 @@ class Article(ABC):
         if node is None:
             node = self.root
 
-        node.children[:] = [
-            child for child in node.children if self.prune_empty_nodes(child)
-        ]
+        node.children[:] = [child for child in node.children if self.prune_empty_nodes(child)]
 
         if (node.content is None or node.content == "") and not node.children:
             return None
@@ -264,25 +259,7 @@ class Retriever:
     This class should be extended to implement specific retrieval functionalities.
     Users can design their retriever modules as needed by implementing the retrieve method.
     The retrieval model/search engine used for each part should be declared with a suffix '_rm' in the attribute name.
-
-    Post-Retrieval Processing:
-    - Section-Based Boosting: 질문에 "개요", "소개" 등이 포함되면 해당 섹션 청크에 가산점 부여
-    - Diversity Enforcement: Text/Table 비율 강제 (Table 편향 방지)
     """
-
-    # 섹션 가중치 부여를 위한 키워드 매핑
-    SECTION_BOOST_KEYWORDS = {
-        "overview": ["개요", "overview", "소개", "introduction", "회사의 개요", "기업 개요"],
-        "business": ["사업", "business", "사업 내용", "사업의 내용", "주요 사업"],
-        "financial": ["재무", "financial", "재무제표", "매출", "손익"],
-        "history": ["연혁", "history", "설립", "역사"],
-    }
-
-    # 섹션 부스트 점수
-    SECTION_BOOST_SCORE = 0.3
-
-    # 다양성 강제: 최소 Text 비율 (0.4 = 40% 이상은 Text여야 함)
-    MIN_TEXT_RATIO = 0.4
 
     def __init__(self, rm: dspy.Retrieve, max_thread: int = 1):
         self.max_thread = max_thread
@@ -290,8 +267,8 @@ class Retriever:
 
     def collect_and_reset_rm_usage(self):
         combined_usage = []
-        if hasattr(getattr(self, "rm"), "get_usage_and_reset"):
-            combined_usage.append(getattr(self, "rm").get_usage_and_reset())
+        if hasattr(self.rm, "get_usage_and_reset"):
+            combined_usage.append(self.rm.get_usage_and_reset())
 
         name_to_usage = {}
         for usage in combined_usage:
@@ -303,213 +280,28 @@ class Retriever:
 
         return name_to_usage
 
-    def _detect_query_intent(self, query: str) -> List[str]:
-        """
-        질문에서 섹션 의도(intent)를 감지
-
-        Args:
-            query: 검색 쿼리
-
-        Returns:
-            감지된 섹션 카테고리 리스트 (예: ["overview", "business"])
-        """
-        detected_intents = []
-        query_lower = query.lower()
-
-        for category, keywords in self.SECTION_BOOST_KEYWORDS.items():
-            for keyword in keywords:
-                if keyword.lower() in query_lower:
-                    detected_intents.append(category)
-                    break
-
-        return detected_intents
-
-    def _calculate_section_boost(self, title: str, intents: List[str]) -> float:
-        """
-        섹션 제목과 질문 의도를 비교하여 부스트 점수 계산
-
-        Args:
-            title: 청크의 섹션 제목 (section_path)
-            intents: 감지된 질문 의도
-
-        Returns:
-            부스트 점수 (0.0 ~ SECTION_BOOST_SCORE)
-        """
-        if not intents or not title:
-            return 0.0
-
-        title_lower = title.lower()
-
-        for intent in intents:
-            keywords = self.SECTION_BOOST_KEYWORDS.get(intent, [])
-            for keyword in keywords:
-                if keyword.lower() in title_lower:
-                    logger.debug(f"Section boost applied: '{title}' matches intent '{intent}'")
-                    return self.SECTION_BOOST_SCORE
-
-        return 0.0
-
-    def _get_chunk_type(self, data: dict) -> str:
-        """
-        검색 결과에서 chunk_type 추출
-
-        Args:
-            data: 검색 결과 딕셔너리
-
-        Returns:
-            "text" 또는 "table"
-        """
-        # URL에서 chunk_type 힌트 추출 (dart_report_X_chunk_Y 형식)
-        url = data.get("url", "")
-        content = data.get("content", "") or (data.get("snippets", [""])[0] if data.get("snippets") else "")
-
-        # 테이블 감지 휴리스틱:
-        # 1. content에 마크다운 테이블 구분자(|) 포함
-        # 2. content에 "[표 데이터]" 태그 포함
-        # 3. title에 "표" 포함
-        if "|" in content and content.count("|") > 5:
-            return "table"
-        if "[표 데이터]" in content:
-            return "table"
-        if "표" in data.get("title", ""):
-            return "table"
-
-        return "text"
-
-    def _apply_diversity_enforcement(
-        self, results: List[dict], top_k: int = None
-    ) -> List[dict]:
-        """
-        Diversity Enforcement: Text/Table 비율 강제
-
-        AI가 테이블만 편식하지 못하게, 최소 Text 비율을 강제합니다.
-
-        Args:
-            results: 검색 결과 리스트 (score로 정렬됨)
-            top_k: 최종 선택할 개수 (None이면 전체 반환)
-
-        Returns:
-            다양성이 보장된 결과 리스트
-        """
-        if not results:
-            return results
-
-        if top_k is None:
-            top_k = len(results)
-
-        # chunk_type 분류
-        text_results = []
-        table_results = []
-
-        for r in results:
-            chunk_type = self._get_chunk_type(r)
-            if chunk_type == "text":
-                text_results.append(r)
-            else:
-                table_results.append(r)
-
-        # 최소 Text 개수 계산
-        min_text_count = max(1, int(top_k * self.MIN_TEXT_RATIO))
-
-        # 결과 구성
-        final_results = []
-
-        # 1. Text에서 min_text_count 만큼 먼저 선택
-        for r in text_results[:min_text_count]:
-            final_results.append(r)
-
-        # 2. 나머지 슬롯은 score 순으로 채움 (Text/Table 무관)
-        remaining_slot = top_k - len(final_results)
-        remaining_pool = [r for r in results if r not in final_results]
-
-        for r in remaining_pool[:remaining_slot]:
-            final_results.append(r)
-
-        logger.info(
-            f"Diversity Enforcement: {len(text_results)} text, {len(table_results)} table "
-            f"→ Selected {len([r for r in final_results if self._get_chunk_type(r) == 'text'])} text, "
-            f"{len([r for r in final_results if self._get_chunk_type(r) == 'table'])} table"
-        )
-
-        return final_results
-
-    def retrieve(
-        self, query: Union[str, List[str]], exclude_urls: List[str] = []
-    ) -> List[Information]:
+    def retrieve(self, query: str | list[str], exclude_urls: list[str] = []) -> list[Information]:
         queries = query if isinstance(query, list) else [query]
         to_return = []
 
-        # 질문 의도 감지 (전체 쿼리에서)
-        combined_query = " ".join(queries)
-        detected_intents = self._detect_query_intent(combined_query)
-        if detected_intents:
-            logger.info(f"Detected query intents: {detected_intents}")
-
         def process_query(q):
-            retrieved_data_list = self.rm(
-                query_or_queries=[q], exclude_urls=exclude_urls
-            )
+            retrieved_data_list = self.rm(query_or_queries=[q], exclude_urls=exclude_urls)
             local_to_return = []
             for data in retrieved_data_list:
-                # data가 dspy.Prediction 객체인 경우 딕셔너리로 변환
-                if hasattr(data, '_store') and not isinstance(data, dict):
-                    # dspy.Prediction의 내부 저장소 사용
-                    data = dict(data._store)
-                elif hasattr(data, '__dict__') and not isinstance(data, dict):
-                    data = {k: v for k, v in data.__dict__.items() if not k.startswith('_')}
-
-                # snippets 필드가 없으면 content에서 생성
-                if "snippets" not in data:
-                    content = data.get("content", "")
-                    data["snippets"] = [content] if content else []
-
                 for i in range(len(data["snippets"])):
                     # STORM generate the article with citations. We do not consider multi-hop citations.
                     # Remove citations in the source to avoid confusion.
-                    data["snippets"][i] = ArticleTextProcessing.remove_citations(
-                        data["snippets"][i]
-                    )
-
-                # Section-Based Boosting: score 조정
-                original_score = data.get("score", 0.0)
-                section_boost = self._calculate_section_boost(
-                    data.get("title", ""), detected_intents
-                )
-                adjusted_score = original_score + section_boost
-
-                if section_boost > 0:
-                    logger.debug(
-                        f"Boosted '{data.get('title', '')[:30]}...' "
-                        f"score: {original_score:.3f} → {adjusted_score:.3f}"
-                    )
-
-                # score 업데이트
-                data["score"] = adjusted_score
-
-                local_to_return.append(data)
+                    data["snippets"][i] = ArticleTextProcessing.remove_citations(data["snippets"][i])
+                storm_info = Information.from_dict(data)
+                storm_info.meta["query"] = q
+                local_to_return.append(storm_info)
             return local_to_return
 
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=self.max_thread
-        ) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_thread) as executor:
             results = list(executor.map(process_query, queries))
 
-        # 모든 결과 합치기
-        all_results = []
         for result in results:
-            all_results.extend(result)
-
-        # Score 기준 재정렬
-        all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
-
-        # Diversity Enforcement 적용
-        all_results = self._apply_diversity_enforcement(all_results)
-
-        # Information 객체로 변환
-        for data in all_results:
-            storm_info = Information.from_dict(data)
-            storm_info.meta["query"] = combined_query
-            to_return.append(storm_info)
+            to_return.extend(result)
 
         return to_return
 
@@ -546,9 +338,7 @@ class OutlineGenerationModule(ABC):
     """
 
     @abstractmethod
-    def generate_outline(
-        self, topic: str, information_table: InformationTable, **kwargs
-    ) -> Article:
+    def generate_outline(self, topic: str, information_table: InformationTable, **kwargs) -> Article:
         """
         Generate outline for the article. Required arguments include:
             topic: the topic of interest
@@ -631,9 +421,7 @@ class LMConfigs(ABC):
     def init_check(self):
         for attr_name in self.__dict__:
             if "_lm" in attr_name and getattr(self, attr_name) is None:
-                logging.warning(
-                    f"Language model for {attr_name} is not initialized. Please call set_{attr_name}()"
-                )
+                logging.warning(f"Language model for {attr_name} is not initialized. Please call set_{attr_name}()")
 
     def collect_and_reset_lm_history(self):
         history = []
@@ -647,9 +435,7 @@ class LMConfigs(ABC):
     def collect_and_reset_lm_usage(self):
         combined_usage = []
         for attr_name in self.__dict__:
-            if "_lm" in attr_name and hasattr(
-                getattr(self, attr_name), "get_usage_and_reset"
-            ):
+            if "_lm" in attr_name and hasattr(getattr(self, attr_name), "get_usage_and_reset"):
                 combined_usage.append(getattr(self, attr_name).get_usage_and_reset())
 
         model_name_to_usage = {}
@@ -658,12 +444,8 @@ class LMConfigs(ABC):
                 if model_name not in model_name_to_usage:
                     model_name_to_usage[model_name] = tokens
                 else:
-                    model_name_to_usage[model_name]["prompt_tokens"] += tokens[
-                        "prompt_tokens"
-                    ]
-                    model_name_to_usage[model_name]["completion_tokens"] += tokens[
-                        "completion_tokens"
-                    ]
+                    model_name_to_usage[model_name]["prompt_tokens"] += tokens["prompt_tokens"]
+                    model_name_to_usage[model_name]["completion_tokens"] += tokens["completion_tokens"]
 
         return model_name_to_usage
 
@@ -697,9 +479,7 @@ class Engine(ABC):
             logger.info(f"{func.__name__} executed in {execution_time:.4f} seconds")
             self.lm_cost[func.__name__] = self.lm_configs.collect_and_reset_lm_usage()
             if hasattr(self, "retriever"):
-                self.rm_cost[func.__name__] = (
-                    self.retriever.collect_and_reset_rm_usage()
-                )
+                self.rm_cost[func.__name__] = self.retriever.collect_and_reset_rm_usage()
             return result
 
         return wrapper
@@ -717,7 +497,7 @@ class Engine(ABC):
             setattr(self, method_name, decorated_method)
 
     @abstractmethod
-    def run_knowledge_curation_module(self, **kwargs) -> Optional[InformationTable]:
+    def run_knowledge_curation_module(self, **kwargs) -> InformationTable | None:
         pass
 
     @abstractmethod
@@ -780,7 +560,7 @@ class Agent(ABC):
         - The agent's role, perspective, and the knowledge base content will influence how the utterance is formulated.
     """
 
-    from .dataclass import KnowledgeBase, ConversationTurn
+    from .dataclass import ConversationTurn, KnowledgeBase
 
     def __init__(self, topic: str, role_name: str, role_description: str):
         self.topic = topic
@@ -796,7 +576,7 @@ class Agent(ABC):
     def generate_utterance(
         self,
         knowledge_base: KnowledgeBase,
-        conversation_history: List[ConversationTurn],
+        conversation_history: list[ConversationTurn],
         logging_wrapper: "LoggingWrapper",
         **kwargs,
     ):

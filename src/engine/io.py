@@ -25,9 +25,7 @@ def get_safe_dir_name(name: str, fallback: str = "unknown") -> str:
     return safe.strip(". ") or fallback
 
 
-def create_run_directory(
-    base_dir: str, company_id: int, company_name: str, job_id: str = None
-) -> str:
+def create_run_directory(base_dir: str, company_id: int, company_name: str, job_id: str = None) -> str:
     """
     실행 결과를 저장할 타임스탬프 기반 디렉토리를 생성합니다.
     형식: {base_dir}/YYYYMMDD_HHMMSS_{company_name}_{job_id_suffix}
@@ -81,14 +79,10 @@ def load_storm_output_files(topic_dir: str) -> dict[str, Any]:
         result["report_content"] = _safe_read_text(raw_path)
 
     # 2. Other Metadata
-    result["toc_text"] = _safe_read_text(
-        os.path.join(topic_dir, "storm_gen_outline.txt")
-    )
+    result["toc_text"] = _safe_read_text(os.path.join(topic_dir, "storm_gen_outline.txt"))
     result["references"] = _safe_read_json(os.path.join(topic_dir, "url_to_info.json"))
     result["logs"] = _safe_read_json(os.path.join(topic_dir, "conversation_log.json"))
-    result["search_results"] = _safe_read_json(
-        os.path.join(topic_dir, "raw_search_results.json")
-    )
+    result["search_results"] = _safe_read_json(os.path.join(topic_dir, "raw_search_results.json"))
     result["run_config"] = _safe_read_json(os.path.join(topic_dir, "run_config.json"))
 
     return result

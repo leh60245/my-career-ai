@@ -3,7 +3,7 @@
 target-version = "py311"
 
 # 2. 줄 길이: Black과 동일한 88을 쓰거나, 모니터가 커진 요즘은 120도 많이 사용
-line-length = 88
+line-length = 120
 
 # 3. 제외할 폴더
 exclude = [

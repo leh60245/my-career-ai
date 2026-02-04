@@ -1,26 +1,8 @@
-"""
-Analysis Service - DART Report Management (Service Layer)
-
-Responsibilities:
-    - Save report metadata with rcept_no de-duplication
-    - Track report processing status
-    - Provide pagination for company reports
-
-Legacy Parity:
-    - Matches DBManager.insert_report (returns existing on duplicate)
-    - Matches DBManager.update_report_status semantics
-"""
-
 import logging
 from typing import Any
 
-from src.database.models.analysis_report import AnalysisReport
-from src.database.repositories import (
-    AnalysisReportRepository,
-    CompanyRepository,
-    DuplicateEntity,
-    EntityNotFound,
-)
+from src.models import AnalysisReport
+from src.repositories import AnalysisReportRepository, CompanyRepository, DuplicateEntity, EntityNotFound
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +49,7 @@ class AnalysisService:
         if not rcept_no:
             raise ValueError("rcept_no is required in data")
 
-        company = await self.company_repo.get_by_id(company_id)
+        company = await self.company_repo.get(company_id)
         if not company:
             raise EntityNotFound(f"Company with id {company_id} not found")
 
@@ -77,13 +59,9 @@ class AnalysisService:
 
         if existing:
             if return_existing:
-                logger.debug(
-                    f"AnalysisReport exists for rcept_no={rcept_no}; returning existing"
-                )
+                logger.debug(f"AnalysisReport exists for rcept_no={rcept_no}; returning existing")
                 return existing
-            raise DuplicateEntity(
-                f"AnalysisReport with rcept_no '{rcept_no}' already exists"
-            )
+            raise DuplicateEntity(f"AnalysisReport with rcept_no '{rcept_no}' already exists")
 
         # 4. Create New Report
         report_data = {
@@ -118,9 +96,7 @@ class AnalysisService:
             "Error",
         }
         if new_status not in valid_statuses:
-            raise ValueError(
-                f"Invalid status: {new_status}. Must be one of {sorted(valid_statuses)}"
-            )
+            raise ValueError(f"Invalid status: {new_status}. Must be one of {sorted(valid_statuses)}")
 
         report = await self.analysis_repo.get_by_rcept_no(rcept_no)
         if not report:

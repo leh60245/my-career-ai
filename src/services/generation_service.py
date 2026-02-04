@@ -1,22 +1,8 @@
-"""
-Generation Service - AI Report Generation & Storage (Service Layer)
-
-Refactored:
-- Removed redundant session management (Delegate to Repositories)
-- Fixed TypeError by using injected repository instances directly
-- Added type guards (isinstance) for Pylance safety
-- Aligned with BaseRepository pattern (self.session)
-"""
-
 import logging
 from typing import Any
 
-from src.database.models.generated_report import GeneratedReport
-from src.database.repositories import (
-    CompanyRepository,
-    EntityNotFound,
-    GeneratedReportRepository,
-)
+from src.models import GeneratedReport
+from src.repositories import CompanyRepository, EntityNotFound, GeneratedReportRepository
 
 logger = logging.getLogger(__name__)
 

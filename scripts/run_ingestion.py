@@ -19,16 +19,12 @@ from sqlalchemy import func, select
 # NEW: Service Layer & Database Engine
 # 여기에 # noqa: E402를 붙여서 경고를 무시합니다.
 from src.database import AsyncDatabaseEngine
-from src.database.models import Base
-from src.database.repositories import (
-    AnalysisReportRepository,
-    CompanyRepository,
-    SourceMaterialRepository,
-)
 
 # Refactored Modules
 from src.ingestion.embedding_worker import ContextLookbackEmbeddingWorker  # noqa: E402
 from src.ingestion.pipeline import DataPipeline  # noqa: E402
+from src.models import Base
+from src.repositories import AnalysisReportRepository, CompanyRepository, SourceMaterialRepository
 
 # 프로젝트 루트를 path에 추가
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -92,9 +88,7 @@ async def run_efficient_mode_async(
     # 1. 대상 기업 검색 (Sync Agent call - It's okay in script level)
     # pipeline.run_efficient()는 내부에서 asyncio.run을 쓰므로 사용 금지
     # 직접 Agent를 통해 타겟을 가져옵니다.
-    corps_with_reports = pipeline.agent.get_corps_with_reports(
-        bgn_de=bgn_de, end_de=end_de
-    )
+    corps_with_reports = pipeline.agent.get_corps_with_reports(bgn_de=bgn_de, end_de=end_de)
 
     if limit:
         corps_with_reports = corps_with_reports[:limit]
@@ -140,9 +134,7 @@ async def run_custom_mode_async(stock_codes: list, reset_db: bool = False):
     logger.info("✅ Custom mode complete")
 
 
-async def run_embed_mode_async(
-    batch_size: int = 32, limit: int | None = None, force: bool = False
-):
+async def run_embed_mode_async(batch_size: int = 32, limit: int | None = None, force: bool = False):
     """
     임베딩 생성 모드: 수집된 텍스트 데이터에 대해 벡터 임베딩을 생성합니다.
     """
@@ -180,9 +172,7 @@ async def run_stats_mode_async():
 
         # 2. 임베딩 완료된 청크 카운트
         # ORM으로 카운트 조회
-        stmt = select(func.count(source_repo.model.id)).where(
-            source_repo.model.embedding.is_not(None)
-        )
+        stmt = select(func.count(source_repo.model.id)).where(source_repo.model.embedding.is_not(None))
         result = await session.execute(stmt)
         embedded_count = result.scalar() or 0
 
@@ -235,9 +225,7 @@ Examples:
         help="Efficient mode (companies with reports)",
     )
     mode_group.add_argument("--codes", type=str, help="Stock codes (comma separated)")
-    mode_group.add_argument(
-        "--embed", action="store_true", help="Embedding generation mode"
-    )
+    mode_group.add_argument("--embed", action="store_true", help="Embedding generation mode")
     mode_group.add_argument("--stats", action="store_true", help="DB statistics")
 
     # 공통 옵션
@@ -251,12 +239,8 @@ Examples:
     parser.add_argument("--end-de", type=str, help="Search end date (YYYYMMDD)")
 
     # 임베딩 옵션
-    parser.add_argument(
-        "--batch-size", type=int, default=32, help="Embedding batch size"
-    )
-    parser.add_argument(
-        "--force", action="store_true", help="Regenerate existing embeddings"
-    )
+    parser.add_argument("--batch-size", type=int, default=32, help="Embedding batch size")
+    parser.add_argument("--force", action="store_true", help="Regenerate existing embeddings")
 
     args = parser.parse_args()
 
@@ -274,11 +258,7 @@ Examples:
         stock_codes = [code.strip() for code in args.codes.split(",")]
         asyncio.run(run_custom_mode_async(stock_codes, reset_db=args.reset_db))
     elif args.embed:
-        asyncio.run(
-            run_embed_mode_async(
-                batch_size=args.batch_size, limit=args.limit, force=args.force
-            )
-        )
+        asyncio.run(run_embed_mode_async(batch_size=args.batch_size, limit=args.limit, force=args.force))
     elif args.stats:
         asyncio.run(run_stats_mode_async())
 

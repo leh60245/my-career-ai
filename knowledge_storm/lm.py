@@ -1,20 +1,19 @@
-import backoff
-import dspy
 import functools
 import logging
 import os
 import random
-import requests
 import threading
-from typing import Optional, Literal, Any, List
-import ujson
 from pathlib import Path
+from typing import Any, Literal
 
-
+import backoff
+import dspy
+import requests
+import ujson
 from dsp import ERRORS, backoff_hdlr, giveup_hdlr
 from dsp.modules.hf import openai_to_hf
 from dsp.modules.hf_client import send_hftgi_request_v01_wrapped
-from openai import OpenAI, AzureOpenAI
+from openai import AzureOpenAI, OpenAI
 from transformers import AutoTokenizer
 
 try:
@@ -71,9 +70,9 @@ class LM:
         self.history = []
 
         if "o1-" in model:
-            assert (
-                max_tokens >= 5000 and temperature == 1.0
-            ), "OpenAI's o1-* models require passing temperature=1.0 and max_tokens >= 5000 to `dspy.LM(...)`"
+            assert max_tokens >= 5000 and temperature == 1.0, (
+                "OpenAI's o1-* models require passing temperature=1.0 and max_tokens >= 5000 to `dspy.LM(...)`"
+            )
 
     def __call__(self, prompt=None, messages=None, **kwargs):
         # Build the request.
@@ -85,25 +84,16 @@ class LM:
         if self.model_type == "chat":
             completion = cached_litellm_completion if cache else litellm_completion
         else:
-            completion = (
-                cached_litellm_text_completion if cache else litellm_text_completion
-            )
+            completion = cached_litellm_text_completion if cache else litellm_text_completion
 
-        response = completion(
-            ujson.dumps(dict(model=self.model, messages=messages, **kwargs))
-        )
-        outputs = [
-            c.message.content if hasattr(c, "message") else c["text"]
-            for c in response["choices"]
-        ]
+        response = completion(ujson.dumps(dict(model=self.model, messages=messages, **kwargs)))
+        outputs = [c.message.content if hasattr(c, "message") else c["text"] for c in response["choices"]]
 
         # Logging, with removed api key & where `cost` is None on cache hit.
         kwargs = {k: v for k, v in kwargs.items() if not k.startswith("api_")}
         entry = dict(prompt=prompt, messages=messages, kwargs=kwargs, response=response)
         entry = dict(**entry, outputs=outputs, usage=dict(response["usage"]))
-        entry = dict(
-            **entry, cost=response.get("_hidden_params", {}).get("response_cost")
-        )
+        entry = dict(**entry, cost=response.get("_hidden_params", {}).get("response_cost"))
         self.history.append(entry)
 
         return outputs
@@ -124,9 +114,7 @@ def litellm_completion(request, cache={"no-cache": True, "no-store": True}):
 
 @functools.lru_cache(maxsize=LM_LRU_CACHE_MAX_SIZE)
 def cached_litellm_text_completion(request):
-    return litellm_text_completion(
-        request, cache={"no-cache": False, "no-store": False}
-    )
+    return litellm_text_completion(request, cache={"no-cache": False, "no-store": False})
 
 
 def litellm_text_completion(request, cache={"no-cache": True, "no-store": True}):
@@ -141,9 +129,7 @@ def litellm_text_completion(request, cache={"no-cache": True, "no-store": True})
     api_base = kwargs.pop("api_base", None) or os.getenv(f"{provider}_API_BASE")
 
     # Build the prompt from the messages.
-    prompt = "\n\n".join(
-        [x["content"] for x in kwargs.pop("messages")] + ["BEGIN RESPONSE:"]
-    )
+    prompt = "\n\n".join([x["content"] for x in kwargs.pop("messages")] + ["BEGIN RESPONSE:"])
 
     return litellm.text_completion(
         cache=cache,
@@ -180,7 +166,7 @@ def _inspect_history(lm, n: int = 1):
         print(_green(outputs[0].strip()))
 
         if len(outputs) > 1:
-            choices_text = f" \t (and {len(outputs)-1} other completions)"
+            choices_text = f" \t (and {len(outputs) - 1} other completions)"
             print(_red(choices_text, end=""))
 
     print("\n\n\n")
@@ -198,7 +184,7 @@ class LitellmModel(LM):
     def __init__(
         self,
         model: str = "openai/gpt-4o-mini",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         model_type: Literal["chat", "text"] = "chat",
         **kwargs,
     ):
@@ -218,9 +204,7 @@ class LitellmModel(LM):
     def get_usage_and_reset(self):
         """Get the total tokens used and reset the token usage."""
         usage = {
-            self.model
-            or self.kwargs.get("model")
-            or self.kwargs.get("engine"): {
+            self.model or self.kwargs.get("model") or self.kwargs.get("engine"): {
                 "prompt_tokens": self.prompt_tokens,
                 "completion_tokens": self.completion_tokens,
             }
@@ -240,195 +224,115 @@ class LitellmModel(LM):
         if self.model_type == "chat":
             completion = cached_litellm_completion if cache else litellm_completion
         else:
-            completion = (
-                cached_litellm_text_completion if cache else litellm_text_completion
-            )
+            completion = cached_litellm_text_completion if cache else litellm_text_completion
 
-        response = completion(
-            ujson.dumps(dict(model=self.model, messages=messages, **kwargs))
-        )
+        response = completion(ujson.dumps(dict(model=self.model, messages=messages, **kwargs)))
         response_dict = response.json()
         self.log_usage(response_dict)
-        outputs = [
-            c.message.content if hasattr(c, "message") else c["text"]
-            for c in response["choices"]
-        ]
+        outputs = [c.message.content if hasattr(c, "message") else c["text"] for c in response["choices"]]
 
         # Logging, with removed api key & where `cost` is None on cache hit.
         kwargs = {k: v for k, v in kwargs.items() if not k.startswith("api_")}
-        entry = dict(
-            prompt=prompt, messages=messages, kwargs=kwargs, response=response_dict
-        )
+        entry = dict(prompt=prompt, messages=messages, kwargs=kwargs, response=response_dict)
         entry = dict(**entry, outputs=outputs, usage=dict(response_dict["usage"]))
-        entry = dict(
-            **entry, cost=response.get("_hidden_params", {}).get("response_cost")
-        )
+        entry = dict(**entry, cost=response.get("_hidden_params", {}).get("response_cost"))
         self.history.append(entry)
 
         return outputs
 
 
 # ========================================================================
-# Legacy OpenAIModel (deprecated v1/completions). Kept for reference only.
-#
-# class OpenAIModel(dspy.OpenAI):
-#     def __init__(self, model: str = "gpt-4o-mini", api_key: Optional[str] = None,
-#                  model_type: Literal["chat", "text"] = None, **kwargs):
-#         super().__init__(model=model, api_key=api_key, model_type=model_type, **kwargs)
-#         self._token_usage_lock = threading.Lock()
-#         self.prompt_tokens = 0
-#         self.completion_tokens = 0
-#
-#     def log_usage(self, response):
-#         usage_data = response.get("usage")
-#         if usage_data:
-#             with self._token_usage_lock:
-#                 self.prompt_tokens += usage_data.get("prompt_tokens", 0)
-#                 self.completion_tokens += usage_data.get("completion_tokens", 0)
-#
-#     def get_usage_and_reset(self):
-#         usage = {
-#             self.kwargs.get("model")
-#             or self.kwargs.get("engine"): {
-#                 "prompt_tokens": self.prompt_tokens,
-#                 "completion_tokens": self.completion_tokens,
-#             }
-#         }
-#         self.prompt_tokens = 0
-#         self.completion_tokens = 0
-#         return usage
-#
-#     def __call__(self, prompt: str, only_completed: bool = True,
-#                  return_sorted: bool = False, **kwargs) -> list[dict[str, Any]]:
-#         assert only_completed, "for now"
-#         assert return_sorted is False, "for now"
-#         response = self.request(prompt, **kwargs)
-#         self.log_usage(response)
-#         choices = response["choices"]
-#         completed_choices = [c for c in choices if c["finish_reason"] != "length"]
-#         if only_completed and len(completed_choices):
-#             choices = completed_choices
-#         completions = [self._get_choice_text(c) for c in choices]
-#         return completions
+# The following language model classes were deprecated after v1.1.0.
+# They remain in this file for backward compatibility but will no longer be maintained.
 
 
-class OpenAIModel:
-    """OpenAI client wrapper using the standard Chat Completions API (v1.x).
-
-    - Refactored to match OpenAI Python SDK v1.x best practices[cite: 8].
-    - Uses `client.chat.completions.create` as per documentation.
-    """
+class OpenAIModel(dspy.OpenAI):
+    """A wrapper class for dspy.OpenAI."""
 
     def __init__(
         self,
-        model: str = "gpt-4o",  # Updated to a valid model name 
-        api_key: Optional[str] = None,
-        api_base: Optional[str] = None,
-        temperature: float = 0.7,
-        top_p: Optional[float] = None,
-        max_output_tokens: int = 1024,
+        model: str = "gpt-4o-mini",
+        api_key: str | None = None,
+        model_type: Literal["chat", "text"] = None,
         **kwargs,
     ):
-        self.model = model
-        # Environment variable is automatically handled by SDK, but kept for flexibility [cite: 38]
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.api_base = api_base
-        
-        client_kwargs = {"api_key": self.api_key}
-        if api_base:
-            client_kwargs["base_url"] = api_base
-        
-        # Standard Client Instantiation [cite: 21]
-        self.client = OpenAI(**client_kwargs)
-
+        super().__init__(model=model, api_key=api_key, model_type=model_type, **kwargs)
         self._token_usage_lock = threading.Lock()
         self.prompt_tokens = 0
         self.completion_tokens = 0
-        self.history = []
 
-        # Mapping max_output_tokens to max_completion_tokens for newer models 
-        self.max_completion_tokens = max_output_tokens
-        
-        self.kwargs = {
-            "temperature": temperature,
-            **kwargs,
-        }
-        if top_p is not None:
-            self.kwargs["top_p"] = top_p
-
-    def log_usage(self, usage):
-        if not usage:
-            return
-        # Handle usage object or dict
-        input_tokens = getattr(usage, "prompt_tokens", 0) or usage.get("prompt_tokens", 0)
-        output_tokens = getattr(usage, "completion_tokens", 0) or usage.get("completion_tokens", 0)
-        
-        with self._token_usage_lock:
-            self.prompt_tokens += input_tokens
-            self.completion_tokens += output_tokens
+    def log_usage(self, response):
+        """Log the total tokens from the OpenAI API response."""
+        usage_data = response.get("usage")
+        if usage_data:
+            with self._token_usage_lock:
+                self.prompt_tokens += usage_data.get("prompt_tokens", 0)
+                self.completion_tokens += usage_data.get("completion_tokens", 0)
 
     def get_usage_and_reset(self):
+        """Get the total tokens used and reset the token usage."""
         usage = {
-            self.model: {
+            self.kwargs.get("model") or self.kwargs.get("engine"): {
                 "prompt_tokens": self.prompt_tokens,
                 "completion_tokens": self.completion_tokens,
             }
         }
         self.prompt_tokens = 0
         self.completion_tokens = 0
+
         return usage
 
-    def __call__(self, prompt: str, **kwargs) -> List[str]:
-        req_kwargs = {**self.kwargs, **kwargs}
-        
-        # Cleanup unsupported kwargs for chat completions
-        req_kwargs.pop("n", None)
-        
-        # Override defaults if provided in call
-        temperature = req_kwargs.pop("temperature", self.kwargs.get("temperature"))
-        top_p = req_kwargs.pop("top_p", self.kwargs.get("top_p"))
-        
-        # Handle token limit parameter name change (max_tokens -> max_completion_tokens) 
-        max_tokens_val = req_kwargs.pop(
-            "max_tokens", req_kwargs.pop("max_output_tokens", self.max_completion_tokens)
-        )
+    def __call__(
+        self,
+        prompt: str,
+        only_completed: bool = True,
+        return_sorted: bool = False,
+        **kwargs,
+    ) -> list[dict[str, Any]]:
+        """Copied from dspy/dsp/modules/gpt3.py with the addition of tracking token usage."""
 
-        try:
-            # Correct endpoint: client.chat.completions.create 
-            response = self.client.chat.completions.create(
-                model=self.model,
-                # Correct input parameter: messages list 
-                messages=[{"role": "user", "content": prompt}], 
-                temperature=temperature,
-                max_completion_tokens=max_tokens_val, # 
-                **({} if top_p is None else {"top_p": top_p}),
-                **req_kwargs,
-            )
+        assert only_completed, "for now"
+        assert return_sorted is False, "for now"
 
-            # Correct response parsing 
-            output_text = response.choices[0].message.content
-            
-            # Log usage
-            if hasattr(response, "usage"):
-                self.log_usage(response.usage)
+        # if kwargs.get("n", 1) > 1:
+        #     if self.model_type == "chat":
+        #         kwargs = {**kwargs}
+        #     else:
+        #         kwargs = {**kwargs, "logprobs": 5}
 
-            entry = {
-                "prompt": prompt,
-                "kwargs": {
-                    "temperature": temperature,
-                    "top_p": top_p,
-                    "max_completion_tokens": max_tokens_val,
-                },
-                "response": response.model_dump() if hasattr(response, "model_dump") else response,
-                "outputs": [output_text],
-            }
-            self.history.append(entry)
+        response = self.request(prompt, **kwargs)
 
-            return [output_text]
+        # Log the token usage from the OpenAI API response.
+        self.log_usage(response)
 
-        except Exception as e:
-            print(f"API Error: {e}")
-            return []
+        choices = response["choices"]
+
+        completed_choices = [c for c in choices if c["finish_reason"] != "length"]
+
+        if only_completed and len(completed_choices):
+            choices = completed_choices
+
+        completions = [self._get_choice_text(c) for c in choices]
+        if return_sorted and kwargs.get("n", 1) > 1:
+            scored_completions = []
+
+            for c in choices:
+                tokens, logprobs = (
+                    c["logprobs"]["tokens"],
+                    c["logprobs"]["token_logprobs"],
+                )
+
+                if "<|endoftext|>" in tokens:
+                    index = tokens.index("<|endoftext|>") + 1
+                    tokens, logprobs = tokens[:index], logprobs[:index]
+
+                avglog = sum(logprobs) / len(logprobs)
+                scored_completions.append((avglog, self._get_choice_text(c)))
+
+            scored_completions = sorted(scored_completions, reverse=True)
+            completions = [c for _, c in scored_completions]
+
+        return completions
 
 
 class DeepSeekModel(dspy.OpenAI):
@@ -437,7 +341,7 @@ class DeepSeekModel(dspy.OpenAI):
     def __init__(
         self,
         model: str = "deepseek-chat",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         api_base: str = "https://api.deepseek.com",
         **kwargs,
     ):
@@ -491,9 +395,7 @@ class DeepSeekModel(dspy.OpenAI):
             "messages": [{"role": "user", "content": prompt}],
             **kwargs,
         }
-        response = requests.post(
-            f"{self.api_base}/v1/chat/completions", headers=headers, json=data
-        )
+        response = requests.post(f"{self.api_base}/v1/chat/completions", headers=headers, json=data)
         response.raise_for_status()
         return response.json()
 
@@ -582,9 +484,7 @@ class AzureOpenAIModel(dspy.LM):
             if self.model_type == "chat":
                 messages = [{"role": "user", "content": prompt}]
 
-                response = self.client.chat.completions.create(
-                    messages=messages, **kwargs
-                )
+                response = self.client.chat.completions.create(messages=messages, **kwargs)
             else:
                 response = self.client.completions.create(prompt=prompt, **kwargs)
 
@@ -666,7 +566,7 @@ class GroqModel(dspy.OpenAI):
     def __init__(
         self,
         model: str = "llama3-70b-8192",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         api_base: str = "https://api.groq.com/openai/v1",
         **kwargs,
     ):
@@ -739,9 +639,7 @@ class GroqModel(dspy.OpenAI):
         for message in data["messages"]:
             message.pop("name", None)
 
-        response = requests.post(
-            f"{self.api_base}/chat/completions", headers=headers, json=data
-        )
+        response = requests.post(f"{self.api_base}/chat/completions", headers=headers, json=data)
         response.raise_for_status()
         return response.json()
 
@@ -780,8 +678,8 @@ class ClaudeModel(dspy.dsp.modules.lm.LM):
     def __init__(
         self,
         model: str,
-        api_key: Optional[str] = None,
-        api_base: Optional[str] = None,
+        api_key: str | None = None,
+        api_base: str | None = None,
         **kwargs,
     ):
         super().__init__(model)
@@ -791,12 +689,8 @@ class ClaudeModel(dspy.dsp.modules.lm.LM):
             raise ImportError("Claude requires `pip install anthropic`.") from err
 
         self.provider = "anthropic"
-        self.api_key = api_key = (
-            os.environ.get("ANTHROPIC_API_KEY") if api_key is None else api_key
-        )
-        self.api_base = (
-            "https://api.anthropic.com/v1/messages" if api_base is None else api_base
-        )
+        self.api_key = api_key = os.environ.get("ANTHROPIC_API_KEY") if api_key is None else api_key
+        self.api_base = "https://api.anthropic.com/v1/messages" if api_base is None else api_base
         self.kwargs = {
             "temperature": kwargs.get("temperature", 0.0),
             "max_tokens": min(kwargs.get("max_tokens", 4096), 4096),
@@ -965,8 +859,7 @@ class VLLMClient(dspy.dsp.LM):
     def get_usage_and_reset(self):
         """Get the total tokens used and reset the token usage."""
         usage = {
-            self.kwargs.get("model")
-            or self.kwargs.get("engine"): {
+            self.kwargs.get("model") or self.kwargs.get("engine"): {
                 "prompt_tokens": self.prompt_tokens,
                 "completion_tokens": self.completion_tokens,
             }
@@ -1059,14 +952,8 @@ class TGIClient(dspy.HFClientTGI):
 
             completions = [json_response["generated_text"]]
 
-            if (
-                "details" in json_response
-                and "best_of_sequences" in json_response["details"]
-            ):
-                completions += [
-                    x["generated_text"]
-                    for x in json_response["details"]["best_of_sequences"]
-                ]
+            if "details" in json_response and "best_of_sequences" in json_response["details"]:
+                completions += [x["generated_text"] for x in json_response["details"]["best_of_sequences"]]
 
             response = {"prompt": prompt, "choices": [{"text": c} for c in completions]}
             return response
@@ -1081,7 +968,7 @@ class TogetherClient(dspy.HFModel):
     def __init__(
         self,
         model,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         apply_tokenizer_chat_template=False,
         hf_tokenizer_name=None,
         model_type: Literal["chat", "text"] = "chat",
@@ -1091,9 +978,7 @@ class TogetherClient(dspy.HFModel):
 
         super().__init__(model=model, is_client=True)
         self.session = requests.Session()
-        self.api_key = api_key = (
-            os.environ.get("TOGETHER_API_KEY") if api_key is None else api_key
-        )
+        self.api_key = api_key = os.environ.get("TOGETHER_API_KEY") if api_key is None else api_key
         self.model = model
         self.model_type = model_type
         if os.getenv("TOGETHER_API_BASE") is None:
@@ -1112,9 +997,7 @@ class TogetherClient(dspy.HFModel):
             logging.info("Loading huggingface tokenizer.")
             if hf_tokenizer_name is None:
                 hf_tokenizer_name = self.model
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                hf_tokenizer_name, cache_dir=kwargs.get("cache_dir", None)
-            )
+            self.tokenizer = AutoTokenizer.from_pretrained(hf_tokenizer_name, cache_dir=kwargs.get("cache_dir"))
 
         stop_default = "\n\n---"
 
@@ -1169,9 +1052,7 @@ class TogetherClient(dspy.HFModel):
         top_k = kwargs.get("top_k", 50)
         repetition_penalty = kwargs.get("repetition_penalty", 1)
         if self.apply_tokenizer_chat_template:
-            prompt = self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": prompt}], tokenize=False
-            )
+            prompt = self.tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False)
         # prompt = f"[INST]{prompt}[/INST]" if self.use_inst_template else prompt
 
         if self.model_type == "chat":
@@ -1212,11 +1093,7 @@ class TogetherClient(dspy.HFModel):
             self.log_usage(resp_json)
             if self.model_type == "chat":
                 # completions = [resp_json['output'].get('choices', [])[0].get('message', {}).get('content', "")]
-                completions = [
-                    resp_json.get("choices", [])[0]
-                    .get("message", {})
-                    .get("content", "")
-                ]
+                completions = [resp_json.get("choices", [])[0].get("message", {}).get("content", "")]
             else:
                 # completions = [resp_json['output'].get('choices', [])[0].get('text', "")]
                 completions = [resp_json.get("choices", [])[0].get("text", "")]
@@ -1230,63 +1107,52 @@ class GoogleModel(dspy.dsp.modules.lm.LM):
     def __init__(
         self,
         model: str,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         **kwargs,
     ):
         """You can use `genai.list_models()` to get a list of available models."""
         super().__init__(model)
-        from google import genai
-        from google.genai import types
+        try:
+            import google.generativeai as genai
+        except ImportError as err:
+            raise ImportError("GoogleModel requires `pip install google-generativeai`.") from err
 
         api_key = os.environ.get("GOOGLE_API_KEY") if api_key is None else api_key
-        self.client = genai.Client(api_key=api_key)
-        self.model = model
+        genai.configure(api_key=api_key)
 
-        # 기본 설정 값
-        self.default_config_args = {
+        kwargs = {
             "candidate_count": 1,  # Caveat: Gemini API supports only one candidate for now.
-            "temperature": kwargs.get("temperature", 0.0),
-            "max_output_tokens": kwargs.pop("max_tokens", None),  # GenerationConfig cannot accept max_tokens
-            "top_p": kwargs.get("top_p", 1),
-            "top_k": kwargs.get("top_k", 1)
+            "temperature": (0.0 if "temperature" not in kwargs else kwargs["temperature"]),
+            "max_output_tokens": kwargs["max_tokens"],
+            "top_p": 1,
+            "top_k": 1,
+            **kwargs,
         }
-        # kwargs에 남은 설정들 병합
-        self.default_config_args.update(kwargs)
 
-        # 안전 설정 완화 (기업 분석 데이터 등 안전한 데이터용)
-        # 새로운 SDK에서는 types.SafetySetting을 사용합니다.
-        self.safety_settings = [
-            types.SafetySetting(
-                category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                threshold=types.HarmBlockThreshold.BLOCK_NONE
-            ),
-            types.SafetySetting(
-                category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                threshold=types.HarmBlockThreshold.BLOCK_NONE
-            ),
-            types.SafetySetting(
-                category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                threshold=types.HarmBlockThreshold.BLOCK_NONE
-            ),
-            types.SafetySetting(
-                category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                threshold=types.HarmBlockThreshold.BLOCK_NONE
-            ),
-        ]
+        kwargs.pop("max_tokens", None)  # GenerationConfig cannot accept max_tokens
+
+        self.model = model
+        self.config = genai.GenerationConfig(**kwargs)
+        self.llm = genai.GenerativeModel(model_name=model, generation_config=self.config)
+
+        self.kwargs = {
+            "n": 1,
+            **kwargs,
+        }
 
         self.history: list[dict[str, Any]] = []
+
         self._token_usage_lock = threading.Lock()
         self.prompt_tokens = 0
         self.completion_tokens = 0
 
     def log_usage(self, response):
         """Log the total tokens from the Google API response."""
-        # 새로운 SDK의 response.usage_metadata 구조에 맞춰 접근
         usage_data = response.usage_metadata
         if usage_data:
             with self._token_usage_lock:
-                self.prompt_tokens += (usage_data.prompt_token_count or 0)
-                self.completion_tokens += (usage_data.candidates_token_count or 0)
+                self.prompt_tokens += usage_data.prompt_token_count
+                self.completion_tokens += usage_data.candidates_token_count
 
     def get_usage_and_reset(self):
         """Get the total tokens used and reset the token usage."""
@@ -1302,67 +1168,22 @@ class GoogleModel(dspy.dsp.modules.lm.LM):
         return usage
 
     def basic_request(self, prompt: str, **kwargs):
-        from google.genai import types
+        raw_kwargs = kwargs
+        kwargs = {
+            **self.kwargs,
+            **kwargs,
+        }
 
-        # 요청별 설정 병합
-        config_args = self.default_config_args.copy()
+        # Google disallows "n" arguments.
+        n = kwargs.pop("n", None)
 
-        # dspy에서 넘어오는 max_tokens 처리
-        if "max_tokens" in kwargs:
-            config_args["max_output_tokens"] = kwargs.pop("max_tokens")
-
-        # Google API는 n 파라미터를 지원하지 않음 (loop 처리 필요)
-        kwargs.pop("n", None)
-
-        # 나머지 kwargs 업데이트
-        config_args.update(kwargs)
-
-        # 안전 설정이 초기화되지 않았을 경우를 대비한 방어 코드 (AttributeError 방지)
-        if not hasattr(self, 'safety_settings'):
-            self.safety_settings = [
-                types.SafetySetting(
-                    category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                    threshold=types.HarmBlockThreshold.BLOCK_NONE
-                ),
-                types.SafetySetting(
-                    category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                    threshold=types.HarmBlockThreshold.BLOCK_NONE
-                ),
-                types.SafetySetting(
-                    category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                    threshold=types.HarmBlockThreshold.BLOCK_NONE
-                ),
-                types.SafetySetting(
-                    category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                    threshold=types.HarmBlockThreshold.BLOCK_NONE
-                ),
-            ]
-
-        # GenerateContentConfig 생성
-        config = types.GenerateContentConfig(
-            safety_settings=self.safety_settings,
-            **config_args
-        )
-
-        # 실제 API 호출
-        response = self.client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-            config=config
-        )
-
-        # [수정됨] history에는 JSON 직렬화가 가능한 딕셔너리 형태로 저장
-        try:
-            # Pydantic v2 방식 (권장)
-            response_data = response.model_dump(mode='json')
-        except AttributeError:
-            # 구버전 호환 또는 실패 시 문자열로 저장
-            response_data = str(response)
+        response = self.llm.generate_content(prompt, generation_config=kwargs)
 
         history = {
             "prompt": prompt,
-            "response": [response_data],
-            "kwargs": config_args,
+            "response": [response.to_dict()],
+            "kwargs": kwargs,
+            "raw_kwargs": raw_kwargs,
         }
         self.history.append(history)
 
@@ -1371,23 +1192,21 @@ class GoogleModel(dspy.dsp.modules.lm.LM):
     @backoff.on_exception(
         backoff.expo,
         (Exception,),
-        max_time=300,
-        max_tries=5,
-        # backoff_hdlr가 정의되어 있다고 가정
-        # on_backoff=backoff_hdlr,
-        giveup=lambda e: False,
-        factor=10,
+        max_time=1000,
+        max_tries=8,
+        on_backoff=backoff_hdlr,
+        giveup=giveup_hdlr,
     )
     def request(self, prompt: str, **kwargs):
         """Handles retrieval of completions from Google whilst handling API errors"""
         return self.basic_request(prompt, **kwargs)
 
     def __call__(
-            self,
-            prompt: str,
-            only_completed: bool = True,
-            return_sorted: bool = False,
-            **kwargs,
+        self,
+        prompt: str,
+        only_completed: bool = True,
+        return_sorted: bool = False,
+        **kwargs,
     ):
         assert only_completed, "for now"
         assert return_sorted is False, "for now"
@@ -1396,22 +1215,9 @@ class GoogleModel(dspy.dsp.modules.lm.LM):
 
         completions = []
         for _ in range(n):
-            try:
-                response = self.request(prompt, **kwargs)
-                self.log_usage(response)
-
-                # 응답 텍스트 추출
-                if response.text:
-                    completions.append(response.text)
-                else:
-                    candidate = response.candidates[0] if response.candidates else None
-                    finish_reason = getattr(candidate, 'finish_reason', 'UNKNOWN')
-                    logging.warning(f"Gemini response empty/blocked. Finish reason: {finish_reason}")
-                    completions.append("")
-
-            except Exception as e:
-                logging.warning(f"Error executing Gemini request: {e}")
-                completions.append("")
+            response = self.request(prompt, **kwargs)
+            self.log_usage(response)
+            completions.append(response.parts[0].text)
 
         return completions
 

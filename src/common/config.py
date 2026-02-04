@@ -11,7 +11,6 @@ AI와 Ingestion 양쪽에서 사용하는 모든 설정을 중앙 관리합니�
 """
 
 import os
-from enum import Enum
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -55,8 +54,7 @@ _ALLOWED_PROVIDERS = ["huggingface", "openai"]
 
 if ACTIVE_EMBEDDING_PROVIDER not in _ALLOWED_PROVIDERS:
     raise RuntimeError(
-        f"Invalid EMBEDDING_PROVIDER: {ACTIVE_EMBEDDING_PROVIDER}. "
-        f"Allowed values: {', '.join(_ALLOWED_PROVIDERS)}"
+        f"Invalid EMBEDDING_PROVIDER: {ACTIVE_EMBEDDING_PROVIDER}. Allowed values: {', '.join(_ALLOWED_PROVIDERS)}"
     )
 
 # ============== 프로바이더별 설정 ==============
@@ -115,16 +113,8 @@ AI_CONFIG = {
     "retrieval_min_score": float(os.getenv("RETRIEVAL_MIN_SCORE", "0.5")),
     # Encoder API Type (레거시 호환)
     "encoder_api_type": os.getenv("ENCODER_API_TYPE", "openai"),
+    "reranker_model": "BAAI/bge-reranker-v2-m3",
 }
-
-
-# =============================================================================
-class JOB_STATUS(Enum):
-    """표준화된 작업 상태 Enum (API 간 일관성 유지)."""
-
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
 
 
 # Analysis Topic Configuration (분석 주제 중앙 관리)
@@ -183,20 +173,6 @@ def get_topic_value_by_id(topic_id: str) -> str:
         if topic["id"] == topic_id:
             return topic["value"]
     return None
-
-
-def get_topic_list_for_api():
-    """
-    Frontend용 주제 리스트 포맷입니다.
-    GET /api/topics 엔드포인트에서 사용됩니다.
-    """
-    return [
-        {
-            "id": topic["id"],
-            "label": topic["label"],
-        }
-        for topic in TOPICS
-    ]
 
 
 # =============================================================================
@@ -278,58 +254,3 @@ def validate_config(check_db=True, check_ai=False, check_dart=False):
             f"Missing required environment variables: {', '.join(missing)}. "
             "Please set them in .env or as environment variables."
         )
-
-
-# =============================================================================
-# Debug: Print current config (개발용)
-# =============================================================================
-def print_config():
-    """현재 설정 출력 (디버깅용)"""
-    print("\n" + "=" * 60)
-    print("🔧 Hypercurve Unified Configuration")
-    print("=" * 60)
-
-    print("\n📦 Database:")
-    print(f"   Host: {DB_CONFIG['host']}:{DB_CONFIG['port']}")
-    print(f"   Database: {DB_CONFIG['database']}")
-    print(f"   User: {DB_CONFIG['user']}")
-    print(
-        f"   Password: {'*' * len(DB_CONFIG['password']) if DB_CONFIG['password'] else 'NOT SET'}"
-    )
-
-    print("\n🧠 Embedding:")
-    print(f"   Provider: {EMBEDDING_CONFIG['provider']}")
-    print(f"   Dimension: {EMBEDDING_CONFIG['dimension']}")
-    if EMBEDDING_CONFIG["provider"] == "huggingface":
-        print(f"   Model: {EMBEDDING_CONFIG['hf_model']}")
-    else:
-        print(f"   Model: {EMBEDDING_CONFIG['openai_model']}")
-
-    print("\n🤖 AI:")
-    print(f"   LLM Provider: {AI_CONFIG['llm_provider']}")
-    print(f"   Default Model: {AI_CONFIG['default_model']}")
-    print(f"   OpenAI Key: {'SET' if AI_CONFIG['openai_api_key'] else 'NOT SET'}")
-    print(f"   Google Key: {'SET' if AI_CONFIG['google_api_key'] else 'NOT SET'}")
-
-    print("\n📊 DART:")
-    print(f"   API Key: {'SET' if DART_CONFIG['api_key'] else 'NOT SET'}")
-
-    print("=" * 60 + "\n")
-
-
-if __name__ == "__main__":
-    print_config()
-
-
-def get_canonical_company_name(name: str) -> str:
-    """
-    기업명 정규화 헬퍼 함수
-    예: '삼성전자(주)' -> '삼성전자'
-    """
-    if not name:
-        return ""
-
-    # 흔한 접미/접두사 제거
-    clean_name = name.strip()
-    clean_name = clean_name.replace("(주)", "").replace("주식회사", "")
-    return clean_name.strip()

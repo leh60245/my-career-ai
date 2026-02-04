@@ -1,13 +1,3 @@
-"""
-Source Material Pydantic Schemas
-
-API request/response validation schemas for SourceMaterial model.
-
-Author: Enterprise Architecture Team
-Created: 2026-01-21
-Version: 1.0.0
-"""
-
 from datetime import datetime
 from typing import Any
 
@@ -21,9 +11,7 @@ class SourceMaterialBase(BaseModel):
     section_path: str = Field(..., description="Hierarchical section reference")
     sequence_order: int = Field(..., description="Position in document")
     raw_content: str = Field(..., description="Actual text content")
-    table_metadata: dict[str, Any] | None = Field(
-        None, description="Table-specific info"
-    )
+    table_metadata: dict[str, Any] | None = Field(None, description="Table-specific info")
     meta_info: dict[str, Any] | None = Field(None, description="Additional metadata")
 
 

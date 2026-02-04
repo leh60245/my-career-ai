@@ -27,7 +27,6 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-# QueuePool is the default for create_engine, but explicit import is good for clarity
 from src.common.config import DB_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -101,10 +100,7 @@ class AsyncDatabaseEngine:
         )
 
         logger.info(
-            f"Initializing AsyncEngine: {config['host']}:{config['port']}/{config['database']}"
-        )
-        logger.info(
-            f"Pool Config: size={pool_size}, overflow={max_overflow}, recycle={pool_recycle}"
+            f"Initializing AsyncEngine: {config['host']}:{config['port']}/{config['database']}\nPool Config: size={pool_size}, overflow={max_overflow}, recycle={pool_recycle}, timeout={pool_timeout}"
         )
 
         try:
@@ -145,14 +141,6 @@ class AsyncDatabaseEngine:
 
     @asynccontextmanager
     async def get_session(self) -> AsyncGenerator[AsyncSession, None]:
-        """
-        Transactional Session Context Manager.
-
-        Usage:
-            async with engine.get_session() as session:
-                await session.execute(...)
-                # Auto-commit on exit
-        """
         if self.session_factory is None:
             raise RuntimeError(
                 "Engine not initialized. Call await engine.initialize() first."
@@ -184,11 +172,6 @@ class AsyncDatabaseEngine:
             raise
 
     async def dispose(self) -> None:
-        """
-        Dispose the engine and RESET the singleton instance.
-
-        This is critical for testing environments to ensure isolation.
-        """
         if self.engine:
             logger.info("Disposing AsyncEngine...")
             await self.engine.dispose()
@@ -204,19 +187,3 @@ class AsyncDatabaseEngine:
 # Global Accessor (Optional, but useful)
 async def get_db_engine() -> AsyncDatabaseEngine:
     return AsyncDatabaseEngine()
-
-
-if __name__ == "__main__":
-    import asyncio
-
-    async def main():
-        engine = AsyncDatabaseEngine()
-        try:
-            await engine.initialize(echo=True)
-            async with engine.get_session() as session:
-                result = await session.execute(text("SELECT 1"))
-                print(f"✅ Connection Test: {result.scalar()}")
-        finally:
-            await engine.dispose()
-
-    asyncio.run(main())

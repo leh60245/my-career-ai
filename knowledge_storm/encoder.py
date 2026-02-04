@@ -1,9 +1,8 @@
 import os
-import numpy as np
-
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Tuple, Union, Optional, Dict, Literal
 from pathlib import Path
+
+import numpy as np
 
 try:
     import warnings
@@ -26,9 +25,7 @@ except ImportError:
 
     class LitellmPlaceholder:
         def __getattr__(self, _):
-            raise ImportError(
-                "The LiteLLM package is not installed. Run `pip install litellm`."
-            )
+            raise ImportError("The LiteLLM package is not installed. Run `pip install litellm`.")
 
     litellm = LitellmPlaceholder()
 
@@ -56,10 +53,10 @@ class Encoder:
 
     def __init__(
         self,
-        encoder_type: Optional[str] = None,
-        api_key: Optional[str] = None,
-        api_base: Optional[str] = None,
-        api_version: Optional[str] = None,
+        encoder_type: str | None = None,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        api_version: str | None = None,
     ):
         """
         Initializes the Encoder with the appropriate embedding model.
@@ -109,7 +106,7 @@ class Encoder:
             self.total_token_usage = 0
         return token_usage
 
-    def encode(self, texts: Union[str, List[str]], max_workers: int = 5) -> np.ndarray:
+    def encode(self, texts: str | list[str], max_workers: int = 5) -> np.ndarray:
         """
         Public method to get embeddings for the given texts.
 
@@ -122,18 +119,16 @@ class Encoder:
         return self._get_text_embeddings(texts, max_workers=max_workers)
 
     def _get_single_text_embedding(self, text):
-        response = litellm.embedding(
-            model=self.embedding_model_name, input=text, caching=True, **self.kargs
-        )
+        response = litellm.embedding(model=self.embedding_model_name, input=text, caching=True, **self.kargs)
         embedding = response.data[0]["embedding"]
         token_usage = response.get("usage", {}).get("total_tokens", 0)
         return text, embedding, token_usage
 
     def _get_text_embeddings(
         self,
-        texts: Union[str, List[str]],
+        texts: str | list[str],
         max_workers: int = 5,
-    ) -> Tuple[np.ndarray, int]:
+    ) -> tuple[np.ndarray, int]:
         """
         Get text embeddings using OpenAI's text-embedding-3-small model.
 
@@ -156,10 +151,7 @@ class Encoder:
         total_tokens = 0
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(self._get_single_text_embedding, text): text
-                for text in texts
-            }
+            futures = {executor.submit(self._get_single_text_embedding, text): text for text in texts}
 
             for future in as_completed(futures):
                 try:

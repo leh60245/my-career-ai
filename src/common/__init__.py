@@ -8,14 +8,20 @@ AI와 Ingestion 양쪽에서 공유하는 핵심 컴포넌트:
 - utils: 공통 유틸리티 함수
 """
 
-from .config import AI_CONFIG, BATCH_CONFIG, DART_CONFIG, DB_CONFIG, EMBEDDING_CONFIG
+from .config import AI_CONFIG, BATCH_CONFIG, DART_CONFIG, DB_CONFIG, EMBEDDING_CONFIG, TOPICS
 from .embedding import EmbeddingService
+from .entity_resolver import CompanyEntityResolver
+from .enums import AnalysisReportStatus, ReportJobStatus
 
 __all__ = [
+    "TOPICS",
     "DB_CONFIG",
     "EMBEDDING_CONFIG",
     "DART_CONFIG",
     "BATCH_CONFIG",
     "AI_CONFIG",
     "EmbeddingService",
+    "CompanyEntityResolver",
+    "ReportJobStatus",
+    "AnalysisReportStatus",
 ]
