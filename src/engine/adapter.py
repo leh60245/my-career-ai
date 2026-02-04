@@ -8,8 +8,8 @@ import logging
 from typing import Any
 
 from src.database import AsyncDatabaseEngine
-from src.database.repositories import CompanyRepository, GeneratedReportRepository
-from src.engine.io import find_topic_directory, load_storm_output_files
+from src.engine import find_topic_directory, load_storm_output_files
+from src.repositories import CompanyRepository, GeneratedReportRepository
 from src.services import GenerationService
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ async def save_storm_result_to_db(
     topic: str,
     output_dir: str,
     model_name: str,
-    meta_info: dict[str, Any] = None, # type: ignore
+    meta_info: dict[str, Any] = None,  # type: ignore
 ) -> int | None:
     """
     STORM 결과 디렉토리를 읽어 DB에 저장합니다.
@@ -71,7 +71,7 @@ async def save_storm_result_to_db(
             service = GenerationService(gen_repo, comp_repo)
 
             # 4-1. Company ID 조회
-            company = await comp_repo.get_by_name(company_name)
+            company = await comp_repo.get_by_company_name(company_name)
             if not company:
                 logger.error(f"Company '{company_name}' not found in DB.")
                 return None

@@ -29,8 +29,9 @@ class CompanyRepository(BaseRepository[Company]):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_all_company_names(self) -> Sequence[str]:
-        stmt = select(self.model.company_name)
+    async def get_all_companies_for_cache(self) -> Sequence[Company]:
+        """캐싱을 위해 제약 없이 모든 기업 정보 로드"""
+        stmt = select(self.model) 
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
