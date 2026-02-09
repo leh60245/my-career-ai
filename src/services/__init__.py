@@ -1,6 +1,8 @@
 from .analysis_service import AnalysisService
 from .company_service import CompanyService
+from .dart_service import DartService
 from .generation_service import GenerationService
+from .ingestion_service import IngestionService
 from .llm_query_analyzer import LLMQueryAnalyzer
 from .reranker_service import RerankerService
 from .source_material_service import SourceMaterialService
@@ -12,4 +14,6 @@ __all__ = [
     "SourceMaterialService",
     "LLMQueryAnalyzer",
     "RerankerService",
+    "DartService",
+    "IngestionService",
 ]

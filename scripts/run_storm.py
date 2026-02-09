@@ -58,20 +58,16 @@ from datetime import datetime
 # 프로젝트 루트를 path에 추가
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from knowledge_storm import (
-    STORMWikiLMConfigs,
-    STORMWikiRunner,
-    STORMWikiRunnerArguments,
-)
+from knowledge_storm import STORMWikiLMConfigs, STORMWikiRunner, STORMWikiRunnerArguments
 from knowledge_storm.lm import AzureOpenAIModel, GoogleModel, OpenAIModel
-from knowledge_storm.rm import HybridRM, PostgresRM, SerperRM
+from knowledge_storm.rm import SerperRM
 from knowledge_storm.utils import load_api_key
-from src.common.config import ACTIVE_EMBEDDING_PROVIDER, AI_CONFIG, DB_CONFIG, TOPICS
 
 # NEW: Service Layer & Database Engine
-from src.common.db_utils import get_available_companies
+from src.common import AI_CONFIG, DB_CONFIG, TOPICS
 from src.database import AsyncDatabaseEngine
-from src.database.repositories import CompanyRepository, GeneratedReportRepository
+from src.engine import HybridRM, PostgresRM
+from src.repositories import CompanyRepository, GeneratedReportRepository
 from src.services import GenerationService
 
 # 로깅 설정
@@ -116,9 +112,7 @@ def select_company_and_topic() -> tuple[int, str, str]:
             sel = input("\n👉 기업 번호 입력: ").strip()
             company_id = int(sel)
             if any(cid == company_id for cid, _ in companies):
-                target_company = next(
-                    (cid, name) for cid, name in companies if cid == company_id
-                )
+                target_company = next((cid, name) for cid, name in companies if cid == company_id)
                 break
             else:
                 print("⚠️ 올바른 번호를 입력해주세요.")
@@ -168,9 +162,7 @@ def _safe_dir_component(name: str, fallback: str = "unknown") -> str:
     return safe or fallback
 
 
-def build_run_output_dir(
-    base_output_dir: str, company_id: int, company_name: str = "NONAME"
-) -> str:
+def build_run_output_dir(base_output_dir: str, company_id: int, company_name: str = "NONAME") -> str:
     """
     실행별 결과 폴더를 `base/YYYYMMDD_HHMMSS_company_id/` 형태로 생성합니다.
 
@@ -293,9 +285,7 @@ async def save_report_to_db_async(
     # ========================================
     # Step 2: 필수 파일 읽기
     # ========================================
-    polished_article_path = os.path.join(
-        topic_output_dir, "storm_gen_article_polished.txt"
-    )
+    polished_article_path = os.path.join(topic_output_dir, "storm_gen_article_polished.txt")
     if not os.path.exists(polished_article_path):
         logger.error(f"Required file not found: {polished_article_path}")
         return False
@@ -376,9 +366,7 @@ async def save_report_to_db_async(
             # Service layer generally delegates UoW/Commit to the caller in this pattern.
             await session.commit()
 
-            logger.info(
-                f"✓ Report saved to DB: {analysis_topic} (ID: {report.id}, company_id={company_id})"
-            )
+            logger.info(f"✓ Report saved to DB: {analysis_topic} (ID: {report.id}, company_id={company_id})")
             return True
 
     except Exception as e:
@@ -397,9 +385,7 @@ def save_report_to_db(
 ) -> bool:
     """Sync wrapper for save_report_to_db_async (for backward compatibility)."""
     return asyncio.run(
-        save_report_to_db_async(
-            ai_query, output_dir, model_name, company_id, company_name, analysis_topic
-        )
+        save_report_to_db_async(ai_query, output_dir, model_name, company_id, company_name, analysis_topic)
     )
 
 
@@ -447,25 +433,13 @@ def setup_lm_configs(provider: str = "openai") -> STORMWikiLMConfigs:
         gemini_flash_model = "gemini-2.0-flash"
         gemini_pro_model = "gemini-2.0-flash"
 
-        conv_simulator_lm = GoogleModel(
-            model=gemini_flash_model, max_tokens=2048, **gemini_kwargs
-        )
-        question_asker_lm = GoogleModel(
-            model=gemini_flash_model, max_tokens=2048, **gemini_kwargs
-        )
-        outline_gen_lm = GoogleModel(
-            model=gemini_pro_model, max_tokens=4096, **gemini_kwargs
-        )
-        article_gen_lm = GoogleModel(
-            model=gemini_pro_model, max_tokens=8192, **gemini_kwargs
-        )
-        article_polish_lm = GoogleModel(
-            model=gemini_pro_model, max_tokens=8192, **gemini_kwargs
-        )
+        conv_simulator_lm = GoogleModel(model=gemini_flash_model, max_tokens=2048, **gemini_kwargs)
+        question_asker_lm = GoogleModel(model=gemini_flash_model, max_tokens=2048, **gemini_kwargs)
+        outline_gen_lm = GoogleModel(model=gemini_pro_model, max_tokens=4096, **gemini_kwargs)
+        article_gen_lm = GoogleModel(model=gemini_pro_model, max_tokens=8192, **gemini_kwargs)
+        article_polish_lm = GoogleModel(model=gemini_pro_model, max_tokens=8192, **gemini_kwargs)
 
-        logger.info(
-            f"✓ Using Gemini models: {gemini_flash_model} (fast), {gemini_pro_model} (pro)"
-        )
+        logger.info(f"✓ Using Gemini models: {gemini_flash_model} (fast), {gemini_pro_model} (pro)")
 
     else:
         # OpenAI 모델 설정 (기본값)
@@ -488,25 +462,13 @@ def setup_lm_configs(provider: str = "openai") -> STORMWikiLMConfigs:
             openai_kwargs["api_base"] = os.getenv("AZURE_API_BASE")
             openai_kwargs["api_version"] = os.getenv("AZURE_API_VERSION")
 
-        conv_simulator_lm = ModelClass(
-            model=gpt_large_model, max_tokens=500, **openai_kwargs
-        )
-        question_asker_lm = ModelClass(
-            model=gpt_large_model, max_tokens=500, **openai_kwargs
-        )
-        outline_gen_lm = ModelClass(
-            model=gpt_fast_model, max_tokens=400, **openai_kwargs
-        )
-        article_gen_lm = ModelClass(
-            model=gpt_fast_model, max_tokens=700, **openai_kwargs
-        )
-        article_polish_lm = ModelClass(
-            model=gpt_fast_model, max_tokens=700, **openai_kwargs
-        )
+        conv_simulator_lm = ModelClass(model=gpt_large_model, max_tokens=500, **openai_kwargs)
+        question_asker_lm = ModelClass(model=gpt_large_model, max_tokens=500, **openai_kwargs)
+        outline_gen_lm = ModelClass(model=gpt_fast_model, max_tokens=400, **openai_kwargs)
+        article_gen_lm = ModelClass(model=gpt_fast_model, max_tokens=700, **openai_kwargs)
+        article_polish_lm = ModelClass(model=gpt_fast_model, max_tokens=700, **openai_kwargs)
 
-        logger.info(
-            f"✓ Using OpenAI models: {gpt_large_model} (large), {gpt_fast_model} (fast)"
-        )
+        logger.info(f"✓ Using OpenAI models: {gpt_large_model} (large), {gpt_fast_model} (fast)")
 
     # LM 설정에 모델 할당
     lm_configs.conv_simulator_lm = conv_simulator_lm
@@ -677,9 +639,7 @@ def run_batch_analysis(args):
 
 def main():
     """CLI 진입점: 기업/주제 선택 후 배치 분석 실행."""
-    parser = ArgumentParser(
-        description="Enterprise STORM - 기업 분석 리포트 생성 도구 (Service Layer v3)"
-    )
+    parser = ArgumentParser(description="Enterprise STORM - 기업 분석 리포트 생성 도구 (Service Layer v3)")
 
     # 실행 모드
     parser.add_argument(

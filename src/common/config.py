@@ -1,21 +1,8 @@
-"""
-통합 설정 모듈 (Unified Configuration)
-
-AI와 Ingestion 양쪽에서 사용하는 모든 설정을 중앙 관리합니다.
-환경변수 네이밍을 통일하고 충돌을 방지합니다.
-
-환경변수 표준:
-- DB: PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_DATABASE
-- AI: OPENAI_API_KEY, GOOGLE_API_KEY, ENCODER_API_TYPE
-- DART: DART_API_KEY
-"""
-
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-# 프로젝트 루트에서 .env 로드
 _project_root = Path(__file__).parent.parent.parent
 _env_path = _project_root / ".env"
 if _env_path.exists():

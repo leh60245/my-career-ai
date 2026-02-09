@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import JSON, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models import Base, CreatedAtMixin
+from src.models.base import Base, CreatedAtMixin
 
 if TYPE_CHECKING:
     from src.models import ReportJob

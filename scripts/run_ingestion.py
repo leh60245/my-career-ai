@@ -1,267 +1,209 @@
-#!/usr/bin/env python
-"""
-데이터 수집 파이프라인 실행 스크립트 (run_ingestion_v3.py)
-
-PHASE 3.5: Legacy Migration Complete
-- Refactored to call Async methods directly (No nested asyncio.run)
-- Implements DB Reset using AsyncDatabaseEngine
-- Orchestrates DART Agent -> DataPipeline -> EmbeddingWorker
-"""
-
 import argparse
 import asyncio
 import logging
+
+# 프로젝트 루트 경로 설정
 import os
 import sys
+from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# NEW: Service Layer & Database Engine
-# 여기에 # noqa: E402를 붙여서 경고를 무시합니다.
+from src.common import EmbeddingService
 from src.database import AsyncDatabaseEngine
-
-# Refactored Modules
-from src.ingestion.embedding_worker import ContextLookbackEmbeddingWorker  # noqa: E402
-from src.ingestion.pipeline import DataPipeline  # noqa: E402
-from src.models import Base
 from src.repositories import AnalysisReportRepository, CompanyRepository, SourceMaterialRepository
+from src.services import AnalysisService, CompanyService, DartService, IngestionService
 
-# 프로젝트 루트를 path에 추가
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
-
-
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger(__name__)
+# 로깅 설정
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S")
+logger = logging.getLogger("IngestionRunner")
 
 
-# ============================================================
-# Helper Functions
-# ============================================================
+async def process_corp_pipeline(
+    session,
+    corp_code: str,
+    dart_svc: DartService,
+    ingest_svc: IngestionService,
+    comp_svc: CompanyService,
+    anal_svc: AnalysisService,
+) -> bool:
+    """
+    [단일 기업(corp_code) 처리 파이프라인]
+    """
+    try:
+        # 1. DART에서 최신 기업 정보 조회 (Live Data)
+        corp_info = dart_svc.get_corp_by_code(corp_code)
+        if not corp_info:
+            logger.warning(f"   ⚠️ Invalid corp_code: {corp_code} (Not found in DART list)")
+            return False
+
+        dart_info = dart_svc.extract_company_info(corp_info)
+
+        company_name = getattr(corp_info, "corp_name", "Unknown")
+
+        logger.info(f"▶️ Start Processing: {company_name} ({corp_code})")
+
+        # 2. Company Onboarding (DB 등록/확인)
+        company = await comp_svc.onboard_company(
+            corp_code=dart_info["corp_code"],
+            company_name=dart_info["company_name"],
+            stock_code=dart_info["stock_code"],
+            sector=dart_info["sector"],  # 전달
+            product=dart_info["product"],  # 전달
+        )
+
+        # 3. Fetch Report (최신 사업보고서 조회)
+        report = dart_svc.get_annual_report(corp_code=corp_code)
+        if not report:
+            logger.info(f"   ℹ️ No annual report found for {company_name}")
+            return False
+
+        # 4. Save Report Metadata (중복 체크 포함)
+        meta_data = dart_svc.extract_report_metadata(report, corp_info)
+
+        # 이미 DB에 해당 접수번호(rcept_no)의 보고서가 있다면 -> Skip or Get Existing
+        analysis_report = await anal_svc.save_report_metadata(
+            company_id=company.id, data=meta_data, return_existing=True
+        )
+
+        # 5. Parse & Ingest Report Sections to Source Material
+        raw_chunks = dart_svc.parse_report_sections(report)
+        if not raw_chunks:
+            logger.warning(f"   ⚠️ No valid sections parsed for {company_name}")
+            return False
+
+        saved_chunks = await ingest_svc.save_chunks(analysis_report.id, raw_chunks)
+
+        logger.info(f"   ✅ Success: Ingested {len(saved_chunks)} chunks for {company_name}")
+        return True
+
+    except Exception as e:
+        logger.error(f"   ❌ Failed processing {corp_code}: {str(e)}", exc_info=False)
+        # 개별 기업 실패는 전체 파이프라인을 멈추지 않음 (로그 남기고 False 반환)
+        return False
 
 
-async def reset_database():
-    """DB 초기화: 모든 테이블 삭제 후 재생성"""
-    logger.warning("⚠️ RESETTING DATABASE: All data will be lost!")
-
-    db_engine = AsyncDatabaseEngine()
-    await db_engine.initialize()
-
-    async with db_engine.engine.begin() as conn:
-        # 의존성 순서에 따라 Drop (반대 순서 아님, cascade가 없으면 순서 중요)
-        # Base.metadata.drop_all은 순서를 알아서 처리함
-        await conn.run_sync(Base.metadata.drop_all)
-        logger.info("✅ All tables dropped.")
-
-        await conn.run_sync(Base.metadata.create_all)
-        logger.info("✅ All tables recreated.")
-
-    await db_engine.dispose()
-
-
-# ============================================================
-# Async Execution Functions
-# ============================================================
-
-
-async def run_efficient_mode_async(
-    reset_db: bool = False,
+async def run_pipeline(
+    target_corps: list[str] | None = None,
+    helper_stocks: list[str] | None = None,
+    days: int = 90,
     limit: int | None = None,
-    bgn_de: str | None = None,
-    end_de: str | None = None,
 ):
     """
-    효율 모드: 최근 사업보고서가 있는 기업만 선별하여 수집합니다.
+    [메인 실행 루프]
+    - target_corps가 있으면 그것만 실행 (Manual Mode)
+    - 없으면 최근 N일간 보고서를 낸 기업 자동 검색 (Auto/Efficient Mode)
     """
-    if reset_db:
-        await reset_database()
 
-    logger.info("🔄 Efficient Mode: Searching for targets...")
+    # 1. 인프라 초기화
+    db_engine = AsyncDatabaseEngine()
+    embedding_svc = EmbeddingService()
+    dart_svc = DartService()
 
-    pipeline = DataPipeline()
+    logger.info("🚀 Initializing Ingestion Pipeline...")
 
-    # 1. 대상 기업 검색 (Sync Agent call - It's okay in script level)
-    # pipeline.run_efficient()는 내부에서 asyncio.run을 쓰므로 사용 금지
-    # 직접 Agent를 통해 타겟을 가져옵니다.
-    corps_with_reports = pipeline.agent.get_corps_with_reports(bgn_de=bgn_de, end_de=end_de)
+    # 2. 타겟 리스트 확정 (Target Resolution)
+    final_targets: list[str] = []  # List of corp_codes
 
-    if limit:
-        corps_with_reports = corps_with_reports[:limit]
+    # [Case A] 명시적 corp_code 지정
+    if target_corps:
+        logger.info(f"📋 Mode: Manual (Explicit Corp Codes: {len(target_corps)})")
+        final_targets.extend(target_corps)
 
-    # (Corp, Report) 튜플에서 Corp 객체만 추출
-    targets = [item[0] for item in corps_with_reports]
+    # [Case B] 편의성 stock_code 지정 (Helper) -> corp_code로 변환
+    if helper_stocks:
+        logger.info(f"📋 Mode: Helper (Converting {len(helper_stocks)} stock codes...)")
+        for stock in helper_stocks:
+            corp = dart_svc.get_corp_by_stock_code(stock)
+            if corp:
+                final_targets.append(corp.corp_code)
+            else:
+                logger.warning(f"   ⚠️ Stock code not found: {stock}")
 
-    logger.info(f"📋 Found {len(targets)} targets with reports.")
+    # [Case C] 아무것도 지정 안 함 -> 최근 보고서 제출 기업 자동 검색 (Default)
+    if not final_targets:
+        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
+        logger.info(f"📋 Mode: Auto/Efficient (Reports since {start_date})")
 
-    # 2. Async 파이프라인 실행
-    await pipeline.run_pipeline_async(targets)
+        # DartService에서 "최근 보고서가 있는 기업들의 corp_code"를 가져옴
+        # get_corps_with_reports는 (corp_obj) 리스트를 반환한다고 가정
+        active_corps = dart_svc.get_corps_with_reports(bgn_de=start_date)
 
-    logger.info("✅ Efficient mode complete")
+        final_targets = [c.corp_code for c in active_corps if hasattr(c, "corp_code")]
+        logger.info(f"   Found {len(final_targets)} companies with recent reports.")
 
+    # 중복 제거 (set)
+    final_targets = list(set(final_targets))
 
-async def run_custom_mode_async(stock_codes: list, reset_db: bool = False):
-    """
-    커스텀 모드: 지정한 종목코드 리스트에 대해서만 수집을 수행합니다.
-    """
-    if reset_db:
-        await reset_database()
+    # Limit 적용
+    if limit and len(final_targets) > limit:
+        logger.info(f"   Refining targets to first {limit} entries.")
+        final_targets = final_targets[:limit]
 
-    logger.info(f"🔄 Custom Mode: Processing stock codes: {stock_codes}")
-
-    pipeline = DataPipeline()
-
-    # 1. 종목코드로 Corp 객체 변환
-    targets = []
-    for code in stock_codes:
-        corp = pipeline.agent.get_corp_by_stock_code(code)
-        if corp:
-            targets.append(corp)
-        else:
-            logger.warning(f"⚠️ Stock code not found: {code}")
-
-    if not targets:
-        logger.error("❌ No valid targets found.")
+    if not final_targets:
+        logger.info("🛑 No targets found. Exiting.")
         return
 
-    # 2. Async 파이프라인 실행
-    await pipeline.run_pipeline_async(targets)
-
-    logger.info("✅ Custom mode complete")
-
-
-async def run_embed_mode_async(batch_size: int = 32, limit: int | None = None, force: bool = False):
-    """
-    임베딩 생성 모드: 수집된 텍스트 데이터에 대해 벡터 임베딩을 생성합니다.
-    """
-    logger.info("🔄 Embedding Mode: Generating embeddings with context look-back...")
-
-    worker = ContextLookbackEmbeddingWorker(batch_size=batch_size)
-
-    # Async Run 호출
-    await worker.run_async(limit=limit, force=force)
-
-    logger.info("✅ Embedding mode complete")
-
-
-async def run_stats_mode_async():
-    """
-    DB 통계 조회: 현재 데이터베이스의 적재 현황을 보여줍니다.
-    """
-    logger.info("\n[STATS] DB Statistics")
-    logger.info("=" * 40)
-
-    db_engine = AsyncDatabaseEngine()
+    # 3. 파이프라인 실행
+    stats = {"success": 0, "failed": 0, "skipped": 0}
 
     async with db_engine.get_session() as session:
-        company_repo = CompanyRepository(session)
-        analysis_repo = AnalysisReportRepository(session)
-        source_repo = SourceMaterialRepository(session)
+        # Service Assembly (Dependency Injection)
+        repo_material = SourceMaterialRepository(session)
+        repo_company = CompanyRepository(session)
+        repo_analysis = AnalysisReportRepository(session)
 
-        # 1. 기본 레코드 카운트
-        companies_count = (await company_repo.count()) or 0
-        reports_count = (await analysis_repo.count()) or 0
+        ingest_svc = IngestionService(repo_material, embedding_svc)
+        comp_svc = CompanyService(repo_company)
+        anal_svc = AnalysisService(repo_analysis, repo_company)
 
-        # Source Material 전체 카운트
-        # repo.count()는 필터 없이 전체 개수
-        materials_count = (await source_repo.count()) or 0
+        logger.info(f"🚀 Starting Batch for {len(final_targets)} companies...\n")
 
-        # 2. 임베딩 완료된 청크 카운트
-        # ORM으로 카운트 조회
-        stmt = select(func.count(source_repo.model.id)).where(source_repo.model.embedding.is_not(None))
-        result = await session.execute(stmt)
-        embedded_count = result.scalar() or 0
+        for idx, corp_code in enumerate(final_targets):
+            print(f"[{idx + 1}/{len(final_targets)}] Processing CorpCode: {corp_code}...")
 
-        # 3. 결과 출력
-        logger.info(f"   Companies       : {companies_count:,}")
-        logger.info(f"   Reports         : {reports_count:,}")
-        logger.info(f"   Source Materials: {materials_count:,}")
-        logger.info(f"   Embedded chunks : {embedded_count:,}")
+            try:
+                # 기업 단위 트랜잭션 격리
+                async with session.begin_nested():
+                    success = await process_corp_pipeline(session, corp_code, dart_svc, ingest_svc, comp_svc, anal_svc)
 
-        if materials_count > 0:
-            embed_rate = (embedded_count / materials_count) * 100
-            logger.info(f"   Embedding Rate  : {embed_rate:.1f}%")
-        else:
-            logger.info("   Embedding Rate  : 0.0% (No materials)")
+                    if success:
+                        stats["success"] += 1
+                    else:
+                        stats["skipped"] += 1  # 실패가 아니라, 보고서가 없거나 이미 있어서 넘어간 경우 등
 
+                await session.commit()
+
+            except Exception as e:
+                # 여기서 잡히는 건 process_corp_pipeline 내부에서 처리되지 않은 심각한 에러
+                logger.error(f"🔥 Critical Error on {corp_code}: {e}")
+                stats["failed"] += 1
+                # 메인 루프 계속 진행
+
+    # 4. 종료
     await db_engine.dispose()
-    logger.info("=" * 40)
 
-
-# ============================================================
-# Main Entry Point
-# ============================================================
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Enterprise STORM Data Ingestion Pipeline (v3.5 Async)",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-    # Efficient mode (companies with reports)
-    python -m scripts.run_ingestion_v3 --efficient
-    
-    # Specific companies
-    python -m scripts.run_ingestion_v3 --codes 005930,000660
-    
-    # Generate embeddings
-    python -m scripts.run_ingestion_v3 --embed --batch-size 64
-    
-    # DB statistics
-    python -m scripts.run_ingestion_v3 --stats
-""",
-    )
-
-    # 실행 모드
-    mode_group = parser.add_mutually_exclusive_group(required=True)
-    mode_group.add_argument(
-        "--efficient",
-        action="store_true",
-        help="Efficient mode (companies with reports)",
-    )
-    mode_group.add_argument("--codes", type=str, help="Stock codes (comma separated)")
-    mode_group.add_argument("--embed", action="store_true", help="Embedding generation mode")
-    mode_group.add_argument("--stats", action="store_true", help="DB statistics")
-
-    # 공통 옵션
-    parser.add_argument(
-        "--reset-db",
-        action="store_true",
-        help="Reset DB before execution (WARNING: Deletes all data)",
-    )
-    parser.add_argument("--limit", type=int, help="Max companies/items to process")
-    parser.add_argument("--bgn-de", type=str, help="Search start date (YYYYMMDD)")
-    parser.add_argument("--end-de", type=str, help="Search end date (YYYYMMDD)")
-
-    # 임베딩 옵션
-    parser.add_argument("--batch-size", type=int, default=32, help="Embedding batch size")
-    parser.add_argument("--force", action="store_true", help="Regenerate existing embeddings")
-
-    args = parser.parse_args()
-
-    # Asyncio 실행 래퍼
-    if args.efficient:
-        asyncio.run(
-            run_efficient_mode_async(
-                reset_db=args.reset_db,
-                limit=args.limit,
-                bgn_de=args.bgn_de,
-                end_de=args.end_de,
-            )
-        )
-    elif args.codes:
-        stock_codes = [code.strip() for code in args.codes.split(",")]
-        asyncio.run(run_custom_mode_async(stock_codes, reset_db=args.reset_db))
-    elif args.embed:
-        asyncio.run(run_embed_mode_async(batch_size=args.batch_size, limit=args.limit, force=args.force))
-    elif args.stats:
-        asyncio.run(run_stats_mode_async())
+    print("\n" + "=" * 50)
+    print("📊 Ingestion Summary")
+    print(f"   Total Targets: {len(final_targets)}")
+    print(f"   Success: {stats['success']}")
+    print(f"   Skipped/No Report: {stats['skipped']}")
+    print(f"   Failed : {stats['failed']}")
+    print("=" * 50)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="DART Report Ingestion Pipeline")
+
+    # Args 구조 변경
+    parser.add_argument("--corps", nargs="+", help="Target specific Corp Codes (e.g., 00126380)")
+    parser.add_argument("--stocks", nargs="+", help="Target specific Stock Codes (Helper, converted to Corp Code)")
+    parser.add_argument("--days", type=int, default=90, help="Lookback days for Auto Mode (default: 90)")
+    parser.add_argument("--limit", type=int, help="Max number of companies to process")
+
+    args = parser.parse_args()
+
+    try:
+        asyncio.run(run_pipeline(target_corps=args.corps, helper_stocks=args.stocks, days=args.days, limit=args.limit))
+    except KeyboardInterrupt:
+        logger.info("🛑 Pipeline stopped by user.")

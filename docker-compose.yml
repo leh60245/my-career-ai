@@ -18,6 +18,11 @@ services:
       - D:/DockerData/postgres:/var/lib/postgresql/data
     networks:
       - storm-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   # ----------------------------------------
   # 2. AI 서버 (Ollama - Docker 버전)
@@ -30,16 +35,14 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      # 여기에 모델이 새로 저장됩니다 (기존 윈도우용과 분리됨)
       - D:/DockerData/ollama_new:/root/.ollama
-    # 윈도우 Docker Desktop에서 GPU를 쓰기 위한 핵심 설정
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     networks:
       - storm-network
 

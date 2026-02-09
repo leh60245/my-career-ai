@@ -1,3 +1,4 @@
+
 ```
 enterprise-storm
 ├─ assets
@@ -13,6 +14,7 @@ enterprise-storm
 │  ├─ storm_service.py
 │  └─ __init__.py
 ├─ docker-compose.yml
+├─ docker-credential-fake.cmd
 ├─ docs
 │  ├─ API_SPEC.md
 │  ├─ FEAT-Core-002-HybridRM-Implementation.md
@@ -39,6 +41,12 @@ enterprise-storm
 ├─ frontend
 │  └─ react-app
 │     ├─ .eslintrc.json
+│     ├─ dist
+│     │  ├─ assets
+│     │  │  ├─ index-B4GJRnWF.js
+│     │  │  ├─ index-B4GJRnWF.js.map
+│     │  │  └─ index-CVkp-3zK.css
+│     │  └─ index.html
 │     ├─ index.html
 │     ├─ package-lock.json
 │     ├─ package.json
@@ -74,9 +82,6 @@ enterprise-storm
 │  │  │  └─ __init__.py
 │  │  └─ __init__.py
 │  ├─ dataclass.py
-│  ├─ db
-│  │  ├─ postgres_connector.py
-│  │  └─ __init__.py
 │  ├─ encoder.py
 │  ├─ interface.py
 │  ├─ lm.py
@@ -102,12 +107,15 @@ enterprise-storm
 ├─ README.md
 ├─ requirements.txt
 ├─ scripts
+│  ├─ init_db.py
 │  ├─ run_ingestion.py
 │  └─ run_storm.py
 ├─ src
 │  ├─ common
 │  │  ├─ config.py
 │  │  ├─ embedding.py
+│  │  ├─ entity_resolver.py
+│  │  ├─ enums.py
 │  │  └─ __init__.py
 │  ├─ database
 │  │  ├─ connection.py
@@ -117,55 +125,81 @@ enterprise-storm
 │  │  │  ├─ script.py.mako
 │  │  │  └─ versions
 │  │  │     └─ 001_initial_schema.py
-│  │  ├─ models
-│  │  │  ├─ analysis_report.py
-│  │  │  ├─ base.py
-│  │  │  ├─ company.py
-│  │  │  ├─ generated_report.py
-│  │  │  ├─ source_material.py
-│  │  │  └─ __init__.py
-│  │  ├─ repositories
-│  │  │  ├─ analysis_report_repository.py
-│  │  │  ├─ base_repository.py
-│  │  │  ├─ company_repository.py
-│  │  │  ├─ generated_report_repository.py
-│  │  │  ├─ source_material_repository.py
-│  │  │  └─ __init__.py
 │  │  └─ __init__.py
 │  ├─ engine
 │  │  ├─ adapter.py
 │  │  ├─ builder.py
 │  │  ├─ io.py
+│  │  ├─ README.md
+│  │  ├─ retriever.py
 │  │  └─ __init__.py
 │  ├─ ingestion
-│  │  ├─ dart_agent.py
 │  │  ├─ embedding_worker.py
 │  │  ├─ pipeline.py
+│  │  └─ __init__.py
+│  ├─ models
+│  │  ├─ analysis_report.py
+│  │  ├─ base.py
+│  │  ├─ company.py
+│  │  ├─ generated_report.py
+│  │  ├─ report_job.py
+│  │  ├─ source_material.py
+│  │  └─ __init__.py
+│  ├─ repositories
+│  │  ├─ analysis_report_repository.py
+│  │  ├─ base_repository.py
+│  │  ├─ company_repository.py
+│  │  ├─ generated_report_repository.py
+│  │  ├─ report_job_repository.py
+│  │  ├─ source_material_repository.py
 │  │  └─ __init__.py
 │  ├─ schemas
 │  │  ├─ analysis_report.py
 │  │  ├─ base.py
 │  │  ├─ company.py
 │  │  ├─ generated_report.py
-│  │  └─ source_material.py
+│  │  ├─ llm_query_analysis_result.py
+│  │  ├─ report_job.py
+│  │  ├─ request.py
+│  │  ├─ search.py
+│  │  ├─ source_material.py
+│  │  └─ __init__.py
 │  ├─ services
 │  │  ├─ analysis_service.py
 │  │  ├─ company_service.py
+│  │  ├─ dart_service.py
 │  │  ├─ generation_service.py
-│  │  ├─ vector_search_service.py
+│  │  ├─ ingestion_service.py
+│  │  ├─ llm_query_analyzer.py
+│  │  ├─ reranker_service.py
+│  │  ├─ source_material_service.py
 │  │  └─ __init__.py
 │  └─ __init__.py
 ├─ start_backend.sh
-└─ tests
-   ├─ conftest.py
-   ├─ integration
-   │  ├─ test_db_connection.py
-   │  ├─ test_repositories.py
-   │  └─ __init__.py
-   ├─ README.md
-   ├─ unit
-   │  ├─ test_generation_service.py
-   │  └─ __init__.py
-   └─ __init__.py
+├─ tests
+│  ├─ conftest.py
+│  ├─ integration
+│  │  ├─ test_db_connection.py
+│  │  ├─ test_repositories.py
+│  │  └─ __init__.py
+│  ├─ README.md
+│  ├─ unit
+│  │  ├─ test_generation_service.py
+│  │  └─ __init__.py
+│  └─ __init__.py
+└─ typings
+   └─ dspy
+      ├─ adapters
+      ├─ datasets
+      ├─ evaluate
+      ├─ experimental
+      │  └─ synthesizer
+      ├─ functional
+      ├─ predict
+      ├─ primitives
+      ├─ retrieve
+      ├─ signatures
+      ├─ teleprompt
+      └─ utils
 
 ```

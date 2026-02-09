@@ -2,142 +2,66 @@ import logging
 from typing import Any
 
 from src.models import AnalysisReport
-from src.repositories import AnalysisReportRepository, CompanyRepository, DuplicateEntity, EntityNotFound
+from src.repositories import AnalysisReportRepository, CompanyRepository
 
 logger = logging.getLogger(__name__)
 
 
 class AnalysisService:
-    """Service for managing DART financial reports."""
+    """
+    분석 보고서 메타데이터 관리 서비스 (The Librarian)
+    역할: 보고서의 메타데이터(접수번호, 날짜 등)를 저장하고 중복을 방지합니다.
+    """
 
-    def __init__(
-        self,
-        analysis_repo: AnalysisReportRepository,
-        company_repo: CompanyRepository,
-    ) -> None:
-        """
-        Initialize with repository instances.
-        Repositories should already be bound to an active session.
-        """
-        if analysis_repo is None or company_repo is None:
-            raise ValueError("Repositories cannot be None")
-
-        # Store instances directly
-        self.analysis_repo = analysis_repo
+    def __init__(self, report_repo: AnalysisReportRepository, company_repo: CompanyRepository):
+        self.report_repo = report_repo
         self.company_repo = company_repo
 
     async def save_report_metadata(
-        self,
-        company_id: int,
-        data: dict[str, Any],
-        *,
-        return_existing: bool = True,
+        self, company_id: int, data: dict[str, Any], return_existing: bool = True
     ) -> AnalysisReport:
         """
-        Save DART report metadata with rcept_no de-duplication.
+        보고서 메타데이터 저장 (중복 방지 로직 포함)
 
         Args:
-            company_id: Target company ID
-            data: Dictionary containing report metadata (rcept_no, title, etc.)
-            return_existing: If True, return existing report instead of raising error
+            company_id: 소속 기업 ID (FK)
+            data: DartService에서 추출한 메타데이터 (rcept_no 필수)
+            return_existing: True면 이미 존재할 경우 해당 객체 반환, False면 에러 발생
 
         Returns:
-            Created or existing AnalysisReport instance
+            AnalysisReport: 저장된(혹은 조회된) 보고서 객체
         """
-
-        rcept_no = (data or {}).get("rcept_no")
+        # 1. 필수값 검증
+        rcept_no = data.get("rcept_no")
         if not rcept_no:
-            raise ValueError("rcept_no is required in data")
+            raise ValueError("rcept_no(접수번호) is required for saving report metadata.")
 
-        company = await self.company_repo.get(company_id)
-        if not company:
-            raise EntityNotFound(f"Company with id {company_id} not found")
-
-        # 3. Check Duplicate (using rcept_no)
-        # Repository method call: No session arg needed
-        existing = await self.analysis_repo.get_by_rcept_no(rcept_no)
+        # 2. [Read] 중복 체크 (접수번호 기준)
+        # DART 접수번호는 절대 고유하므로 이를 기준으로 판단
+        existing = await self.report_repo.get_by_rcept_no(rcept_no)
 
         if existing:
             if return_existing:
-                logger.debug(f"AnalysisReport exists for rcept_no={rcept_no}; returning existing")
+                logger.info(f"   ℹ️ Report already exists: {data.get('title')} ({rcept_no})")
                 return existing
-            raise DuplicateEntity(f"AnalysisReport with rcept_no '{rcept_no}' already exists")
+            else:
+                raise ValueError(f"Report {rcept_no} already exists.")
 
-        # 4. Create New Report
+        # 3. [Create] 신규 저장
+        # 모델 스키마에 맞춰 데이터 매핑
         report_data = {
             "company_id": company_id,
+            "title": data.get("title", "Untitled"),
             "rcept_no": rcept_no,
-            "rcept_dt": data.get("rcept_dt", ""),
-            "title": data.get("title", ""),
+            "rcept_dt": data.get("rcept_dt"),
             "report_type": data.get("report_type", "annual"),
-            "basic_info": data.get("basic_info"),
-            "status": data.get("status", "Raw_Loaded"),
+            "status": "PENDING",
         }
 
-        return await self.analysis_repo.create(report_data)
+        new_report = await self.report_repo.create(report_data)
+        logger.info(f"   ✨ Saved report metadata: {new_report.title}")
 
-    async def get_report_status(self, rcept_no: str) -> str | None:
-        """Get current status of a report by rcept_no."""
-        report = await self.analysis_repo.get_by_rcept_no(rcept_no)
-        return report.status if report else None
+        return new_report
 
-    async def update_status(
-        self,
-        rcept_no: str,
-        new_status: str,
-    ) -> AnalysisReport:
-        """Update report status by rcept_no."""
-
-        valid_statuses = {
-            "Raw_Loaded",
-            "Embedded",
-            "Generated",
-            "Archived",
-            "Error",
-        }
-        if new_status not in valid_statuses:
-            raise ValueError(f"Invalid status: {new_status}. Must be one of {sorted(valid_statuses)}")
-
-        report = await self.analysis_repo.get_by_rcept_no(rcept_no)
-        if not report:
-            raise EntityNotFound(f"AnalysisReport with rcept_no '{rcept_no}' not found")
-
-        return await self.analysis_repo.update(report.id, {"status": new_status})
-
-    async def list_reports_by_company(
-        self,
-        company_id: int,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> dict[str, Any]:
-        """
-        List all reports for a company with pagination.
-        Note: Current implementation performs in-memory slicing.
-        """
-        filters = {"company_id": company_id}
-
-        # Get all matching reports
-        # [Fix] Pylance type check: Explicitly ensure 'reports' is a list
-        result = await self.analysis_repo.get_by_filter(filters)
-        reports = result if isinstance(result, list) else []
-
-        # Calculate total
-        total = len(reports)
-
-        # Manual Pagination
-        if reports:
-            # Sort by rcept_dt desc (assuming newest first is desired)
-            reports.sort(key=lambda x: x.rcept_dt, reverse=True)
-
-            start = offset
-            end = offset + limit
-            paginated_reports = reports[start:end]
-        else:
-            paginated_reports = []
-
-        return {
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-            "reports": paginated_reports,
-        }
+    async def get_report(self, report_id: int) -> AnalysisReport | None:
+        return await self.report_repo.get(report_id)

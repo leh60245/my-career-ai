@@ -1,189 +1,98 @@
-"""
-Async Database Connection Management (SQLAlchemy 2.0+ with asyncpg)
-
-Refactored for Phase 3.5:
-- Robust Singleton Lifecycle: dispose() now correctly resets the singleton instance.
-- centralized Configuration: Pool settings are loaded from DB_CONFIG if available.
-- Type Safety: Improved type hinting and SQLAlchemy 2.0 compliance.
-
-Usage:
-    engine = AsyncDatabaseEngine()
-    await engine.initialize()
-    async with engine.get_session() as session:
-        ...
-    await engine.dispose()
-"""
-
 import logging
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Optional
 
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from dotenv import load_dotenv
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import declarative_base
 
-from src.common.config import DB_CONFIG
+# [수정 2] .env 파일 로드 (이게 없으면 os.getenv가 아무것도 못 가져옵니다)
+load_dotenv()
 
 logger = logging.getLogger(__name__)
+Base = declarative_base()
+
+# 환경 변수 설정
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD")  # .env가 로드되어야 값을 가져옴
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "postgres")
+
+# [안전장치] 비밀번호가 없으면 연결 시도 전에 알려줌
+if not DB_PASSWORD:
+    # 로컬 개발 편의를 위해 하드코딩된 fallback을 쓸 수도 있지만,
+    # 명시적으로 에러를 내는 것이 설정 실수를 잡기 좋습니다.
+    # 하지만 님 상황(1234)에 맞춰 fallback을 넣어드리겠습니다.
+    logger.warning("⚠️ DB_PASSWORD not found in env. Using default '1234'.")
+    DB_PASSWORD = "1234"
+
+DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 
 class AsyncDatabaseEngine:
     """
-    Async Database Engine Manager (Singleton Pattern)
-
-    Features:
-        - Connection pooling with configurable limits
-        - Automatic singleton reset on disposal (Crucial for tests)
-        - Context manager for session handling
+    SQLAlchemy AsyncIO 엔진 래퍼 (Singleton Pattern)
     """
 
     _instance: Optional["AsyncDatabaseEngine"] = None
-    _initialized: bool = False
+    session_factory: async_sessionmaker | None = None
 
-    def __new__(cls) -> "AsyncDatabaseEngine":
-        """Implement singleton pattern."""
+    def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self) -> None:
-        """Initialize attributes (idempotent)."""
-        if self._initialized:
+    def __init__(self):
+        # 이미 초기화되었다면 스킵 (Singleton)
+        if hasattr(self, "engine") and self.engine is not None:
             return
 
-        self.engine: AsyncEngine | None = None
-        self.session_factory: async_sessionmaker | None = None
-        self._initialized = True
-
-    async def initialize(
-        self, db_config: dict[str, Any] | None = None, echo: bool = False, **kwargs
-    ) -> None:
-        """
-        Initialize the async engine with connection pooling.
-
-        Args:
-            db_config: Database configuration. Defaults to src.common.config.DB_CONFIG.
-            echo: Enable SQL query logging.
-            **kwargs: Override pool settings (pool_size, max_overflow, etc.)
-        """
-        if self.engine is not None:
-            logger.warning("Engine already initialized, skipping re-initialization")
-            return
-
-        # 1. Configuration Merging
-        config = db_config or DB_CONFIG
-
-        # Validate required keys
-        required_keys = {"host", "port", "user", "password", "database"}
-        if not required_keys.issubset(config.keys()):
-            missing = required_keys - set(config.keys())
-            raise ValueError(f"Missing DB config keys: {missing}")
-
-        # 2. Connection Pool Settings
-        # Priority: kwargs > DB_CONFIG > Defaults
-        pool_size = kwargs.get("pool_size", config.get("pool_size", 20))
-        max_overflow = kwargs.get("max_overflow", config.get("max_overflow", 10))
-        pool_timeout = kwargs.get("pool_timeout", config.get("pool_timeout", 30))
-        pool_recycle = kwargs.get("pool_recycle", config.get("pool_recycle", 3600))
-
-        # 3. Build URL
-        url = (
-            f"postgresql+asyncpg://"
-            f"{config['user']}:{config['password']}"
-            f"@{config['host']}:{config['port']}"
-            f"/{config['database']}"
+        self.engine = create_async_engine(
+            DATABASE_URL,
+            echo=False,
+            pool_pre_ping=True,
+            pool_size=20,
+            max_overflow=10,
+            pool_recycle=3600,
         )
 
-        logger.info(
-            f"Initializing AsyncEngine: {config['host']}:{config['port']}/{config['database']}\nPool Config: size={pool_size}, overflow={max_overflow}, recycle={pool_recycle}, timeout={pool_timeout}"
+        self.session_factory = async_sessionmaker(
+            bind=self.engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autoflush=False,
+            autocommit=False,
         )
 
-        try:
-            self.engine = create_async_engine(
-                url,
-                echo=echo,
-                pool_size=pool_size,
-                max_overflow=max_overflow,
-                pool_timeout=pool_timeout,
-                pool_recycle=pool_recycle,
-                pool_pre_ping=True,  # Check connection liveness before checkout
-                connect_args={
-                    "server_settings": {
-                        "application_name": "enterprise-storm",
-                        "jit": "off",  # Optimize for OLTP
-                    },
-                    "command_timeout": 60,
-                },
-            )
-
-            self.session_factory = async_sessionmaker(
-                self.engine,
-                class_=AsyncSession,
-                expire_on_commit=False,
-                autoflush=False,
-                autocommit=False,
-            )
-
-            # Verify connection
-            await self.health_check()
-            logger.info("✅ AsyncEngine initialized successfully")
-
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize AsyncEngine: {e}")
-            # Ensure cleanup on failure
-            await self.dispose()
-            raise RuntimeError(f"Database initialization failed: {e}") from e
+        logger.info(f"✅ AsyncDatabaseEngine initialized: {DB_HOST}:{DB_PORT}/{DB_NAME}")
 
     @asynccontextmanager
     async def get_session(self) -> AsyncGenerator[AsyncSession, None]:
+        """
+        [Context Manager] async with db.get_session() as session:
+        """
         if self.session_factory is None:
-            raise RuntimeError(
-                "Engine not initialized. Call await engine.initialize() first."
-            )
+            raise RuntimeError("Database SessionFactory is not initialized.")
 
         session: AsyncSession = self.session_factory()
-
         try:
             yield session
             await session.commit()
         except Exception as e:
+            logger.error(f"Session rollback due to exception: {e}")
             await session.rollback()
-            logger.error(f"Session transaction rolled back: {e}")
             raise
         finally:
             await session.close()
 
-    async def health_check(self) -> bool:
-        """Verify database connectivity."""
-        if self.engine is None:
-            raise RuntimeError("Engine not initialized")
-
-        try:
-            async with self.engine.begin() as conn:
-                await conn.execute(text("SELECT 1"))
-            return True
-        except Exception as e:
-            logger.error(f"Health check failed: {e}")
-            raise
-
-    async def dispose(self) -> None:
+    async def dispose(self):
+        """커넥션 풀 종료"""
         if self.engine:
-            logger.info("Disposing AsyncEngine...")
             await self.engine.dispose()
             self.engine = None
             self.session_factory = None
-
-        # CRITICAL: Reset singleton state
-        AsyncDatabaseEngine._instance = None
-        self._initialized = False
-        logger.debug("AsyncDatabaseEngine singleton reset")
-
-
-# Global Accessor (Optional, but useful)
-async def get_db_engine() -> AsyncDatabaseEngine:
-    return AsyncDatabaseEngine()
+            AsyncDatabaseEngine._instance = None
+            logger.info("🗑️ AsyncDatabaseEngine disposed.")

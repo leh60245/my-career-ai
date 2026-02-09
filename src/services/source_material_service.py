@@ -34,13 +34,14 @@ class SourceMaterialService:
     ) -> Sequence[SearchResult]:
 
         # 1. 임베딩
-        query_vector = self.embedding.embed_text(query)
+
+        query_vector = await self.embedding.get_embeddings([query])
 
         fetch_k = top_k * 3 if enable_rerank else top_k
 
         # 2. DB 검색 (순수하게 ID 필터링만 수행)
         raw_rows = await self.repo.search_by_vector(
-            query_embedding=query_vector,
+            query_embedding=query_vector[0],
             company_id_list=company_ids,  # 외부에서 결정된 ID 리스트 사용
             top_k=fetch_k,
             chunk_type_filter="text",  # 우선 텍스트 위주로 검색
@@ -55,7 +56,7 @@ class SourceMaterialService:
         # 4. Reranking (Cross-Encoder)
         if enable_rerank and processed_results:
             logger.info(f"🤖 Reranking {len(processed_results)} documents...")
-            processed_results = self.reranker.rerank(query=query, docs=processed_results, top_k=top_k)
+            processed_results = await self.reranker.rerank(query=query, docs=processed_results, top_k=top_k)
 
         return processed_results  # type: ignore
 

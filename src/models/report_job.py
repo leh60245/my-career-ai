@@ -4,7 +4,7 @@ from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.common import ReportJobStatus
-from src.models import Base, TimestampMixin
+from src.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from src.models import Company, GeneratedReport

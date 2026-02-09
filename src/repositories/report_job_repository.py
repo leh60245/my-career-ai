@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common import ReportJobStatus
 from src.models import ReportJob
-from src.repositories import BaseRepository
+from src.repositories.base_repository import BaseRepository
 
 
 class ReportJobRepository(BaseRepository[ReportJob]):
