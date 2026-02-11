@@ -23,6 +23,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 import DownloadIcon from '@mui/icons-material/Download';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { getJobStatus, getReport, getReportByJobId } from '../services/apiService';
 import '../styles/ReportViewer.css';
 
@@ -661,6 +662,7 @@ const ReportViewer = ({ jobId, initialStatus, onBack }) => {
               <Paper elevation={2} sx={{ p: 4 }}>
                 <div className="markdown-container">
                   <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
                     components={{
                       h1: ({ children, ...props }) => {
                         const text = extractTextFromChildren(children);

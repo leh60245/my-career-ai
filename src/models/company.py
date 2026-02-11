@@ -34,12 +34,12 @@ class Company(
     sector: Mapped[str | None] = mapped_column(String(100), nullable=True)  # 업종
     product: Mapped[str | None] = mapped_column(String(255), nullable=True)  # 주요 제품
 
-    # Relationships
+    # Relationships (lazy="select" — 명시적 접근 시에만 로드)
     analysis_reports: Mapped[list["AnalysisReport"]] = relationship(
-        "AnalysisReport", back_populates="company", lazy="selectin", cascade="all, delete-orphan"
+        "AnalysisReport", back_populates="company", lazy="select", cascade="all, delete-orphan"
     )
     report_jobs: Mapped[list["ReportJob"]] = relationship(
-        "ReportJob", back_populates="company", lazy="selectin", cascade="all, delete-orphan"
+        "ReportJob", back_populates="company", lazy="select", cascade="all, delete-orphan"
     )
 
     __table_args__ = (

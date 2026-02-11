@@ -11,7 +11,7 @@ from knowledge_storm.rm import SerperRM
 from src.common import CompanyEntityResolver, Embedding
 
 # Local Imports
-from src.common.config import AI_CONFIG
+from src.common.config import AI_CONFIG, SERPER_CONFIG, is_blacklisted_url
 
 # [Factory] DB 엔진 생성 로직은 connection.py에서 가져옴 (직접 생성 X)
 from src.database.connection import AsyncDatabaseEngine, create_isolated_engine
@@ -102,11 +102,17 @@ class PostgresRM(dspy.Retrieve):
                     score = res.get("score", 0.0)
                     if score < self.min_score:
                         continue
+                    # DB 소스: 리포트 제목 + 섹션 경로를 표시용 제목으로 구성
+                    company_name = res.get("_company_name", "")
+                    report_title = res.get("_report_title", "")
+                    section_path = res.get("_section_path", "")
+                    display_title = " > ".join(filter(None, [company_name, report_title, section_path])) or res.get("title", "No Title")
+
                     entry = {
                         "snippets": [res.get("content", "")],
-                        "title": res.get("title", "No Title"),
+                        "title": display_title,
                         "url": res.get("url", ""),
-                        "description": "",
+                        "description": f"[내부 DB] {section_path}" if section_path else "",
                     }
                     collected_results.append(entry)
             except Exception as e:
@@ -129,7 +135,30 @@ class HybridRM(dspy.Retrieve):
 
         self.internal_rm = PostgresRM(k=internal_k)
         serper_key = AI_CONFIG.get("serper_api_key")
-        self.external_rm = SerperRM(serper_search_api_key=serper_key, k=external_k)
+
+        # Serper 파라미터: SERPER_CONFIG에서 국가/언어/시간대 설정을 주입
+        serper_query_params = {
+            "autocorrect": SERPER_CONFIG.get("autocorrect", True),
+            "page": SERPER_CONFIG.get("page", 1),
+            "num": external_k,
+        }
+        # 국가/언어 설정 (빈 문자열이면 Serper 기본값 사용)
+        if SERPER_CONFIG.get("gl"):
+            serper_query_params["gl"] = SERPER_CONFIG["gl"]
+        if SERPER_CONFIG.get("hl"):
+            serper_query_params["hl"] = SERPER_CONFIG["hl"]
+        if SERPER_CONFIG.get("location"):
+            serper_query_params["location"] = SERPER_CONFIG["location"]
+        # 시간대 필터 (qdr:y = 최근 1년)
+        if SERPER_CONFIG.get("tbs"):
+            serper_query_params["tbs"] = SERPER_CONFIG["tbs"]
+
+        self.external_rm = SerperRM(
+            serper_search_api_key=serper_key,
+            k=external_k,
+            query_params=serper_query_params,
+        )
+        logger.info(f"SerperRM configured: gl={SERPER_CONFIG.get('gl')}, hl={SERPER_CONFIG.get('hl')}, tbs={SERPER_CONFIG.get('tbs')}")
 
         # 2. Lazy Initialization
         self.analyzer: LLMQueryAnalyzer | None = None
@@ -226,8 +255,17 @@ class HybridRM(dspy.Retrieve):
             raw_e_res = self.external_rm.forward(refined_query, exclude_urls=exclude_urls)
             e_res = self._normalize_dspy_result(raw_e_res)
 
-            # 5. 결과 결합 (내부 + 외부)
-            return i_res + e_res[: self.external_k]
+            # 5. 블랙리스트 필터링 (외부 검색 결과에만 적용)
+            filtered_e_res = []
+            for item in e_res:
+                url = item.get("url", "")
+                if is_blacklisted_url(url):
+                    logger.info(f"Blacklisted URL filtered: {url}")
+                    continue
+                filtered_e_res.append(item)
+
+            # 6. 결과 결합 (내부 + 외부)
+            return i_res + filtered_e_res[: self.external_k]
 
         # 쿼리별 실행
         for query in queries:

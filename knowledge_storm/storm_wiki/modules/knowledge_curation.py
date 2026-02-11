@@ -144,7 +144,9 @@ class QuestionToQuery(dspy.Signature):
     - query 1
     - query 2
     ...
-    - query n"""
+    - query n
+
+    Important: When the topic involves recent events, financials, or news, include the current year or recent date range in your queries to find the most up-to-date information. For Korean companies, also include Korean keywords."""
 
     topic = dspy.InputField(prefix="Topic you are discussing about: ", format=str)
     question = dspy.InputField(prefix="Question you want to answer: ", format=str)
@@ -159,6 +161,11 @@ class AnswerQuestion(dspy.Signature):
         - When information contains tables or numerical values, ALWAYS check for meta information at the end of the paragraph (such as units: 단위, legends: 범례, base dates: 기준일자, currency).
         - Apply these meta details correctly when interpreting and presenting numbers.
         - If "[참고:" appears at the beginning of a passage, pay special attention to the merged metadata note that follows.
+
+    Important guidelines for recency:
+        - Always prefer the most recent data and information when multiple sources are available.
+        - When mentioning dates, fiscal years, or time periods, state them explicitly (e.g., "2025년 3분기" instead of "최근").
+        - If the gathered information is outdated, note this limitation in your response.
     """
 
     topic = dspy.InputField(prefix="Topic you are discussing about:", format=str)

@@ -14,7 +14,7 @@ class GeneratedReportBase(BaseModel):
     # Optional fields
     toc_text: str | None = Field(None, description="Table of contents")
     references_data: dict[str, Any] | None = Field(None, description="URL references")
-    conversation_log: dict[str, Any] | None = Field(None, description="Agent dialogue")
+    conversation_log: dict[str, Any] | list | None = Field(None, description="Agent dialogue")
     meta_info: dict[str, Any] | None = Field(None, description="Processing metadata")
     model_name: str = Field(default="gpt-4o", max_length=50, description="LLM model used")
 

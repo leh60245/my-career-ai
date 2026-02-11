@@ -21,7 +21,7 @@ class GeneratedReport(Base, CreatedAtMixin):
     report_content: Mapped[str] = mapped_column(Text, nullable=False)
     toc_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     references_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    conversation_log: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    conversation_log: Mapped[dict[str, Any] | list | None] = mapped_column(JSON, nullable=True)
     meta_info: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     model_name: Mapped[str] = mapped_column(String(50), default="gpt-4o", nullable=False)
 

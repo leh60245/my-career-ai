@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import traceback
 
 # Knowledge STORM Imports
@@ -13,9 +14,10 @@ from src.engine.adapter import save_storm_result_to_db
 
 # Engine Components
 from src.engine.builder import build_hybrid_rm, build_lm_configs
-from src.engine.io import create_run_directory, write_run_metadata
+from src.engine.io import create_run_directory, find_topic_directory, write_run_metadata
 from src.repositories.company_repository import CompanyRepository
 from src.repositories.report_job_repository import ReportJobRepository
+from src.services.quality_inspector import evaluate_report_quality
 from src.services.report_job_service import ReportJobService
 
 logger = logging.getLogger(__name__)
@@ -91,7 +93,12 @@ async def run_storm_pipeline(
 
         # 3. Blocking Run (스레드에서 실행하여 FastAPI 블로킹 방지)
         logger.info(f"[{job_id}] Running STORM core...")
-        full_topic = f"{company_name} {topic}"
+        from datetime import date
+        today_str = date.today().strftime("%Y-%m-%d")
+        full_topic = f"{company_name} {topic} (기준일: {today_str})"
+        # Windows 파일 시스템에서 허용되지 않는 문자 제거
+        safe_topic = re.sub(r"[\\/:*?\"<>|]", " ", full_topic).strip()
+        safe_topic = re.sub(r"\s+", " ", safe_topic)
 
         loop = asyncio.get_running_loop()
 
@@ -100,7 +107,7 @@ async def run_storm_pipeline(
 
         # 실제 실행 (CPU Bound)
         await loop.run_in_executor(None, lambda: runner.run(
-            topic=full_topic,
+            topic=safe_topic,
             do_research=True,
             do_generate_outline=True,
             do_generate_article=True,
@@ -112,6 +119,25 @@ async def run_storm_pipeline(
         runner.summary()
 
         jobs_dict[job_id]["progress"] = 80
+
+        # ----------------------------------------------------------------
+        # Phase 2.5: 품질 검수 (Quality Inspection)
+        # ----------------------------------------------------------------
+        quality_result = None
+        try:
+            topic_dir = find_topic_directory(output_dir)
+            if topic_dir:
+                article_path = os.path.join(topic_dir, "storm_gen_article_polished.txt")
+                if os.path.exists(article_path):
+                    with open(article_path, encoding="utf-8") as f:
+                        article_text = f.read()
+                    if article_text.strip():
+                        logger.info(f"[{job_id}] Running quality inspection...")
+                        quality_result = evaluate_report_quality(article_text)
+                        logger.info(f"[{job_id}] Quality grade: {quality_result.get('overall_grade', 'N/A')}")
+                        jobs_dict[job_id]["quality_grade"] = quality_result.get("overall_grade", "N/A")
+        except Exception as qe:
+            logger.warning(f"[{job_id}] Quality inspection failed (non-blocking): {qe}")
 
         # ----------------------------------------------------------------
         # Phase 3: 결과 저장 및 종료 처리 (DB)
@@ -131,9 +157,13 @@ async def run_storm_pipeline(
                 topic=topic,
                 output_dir=output_dir,
                 model_name=model_provider,
-                meta_info={"job_id": job_id}
+                meta_info={
+                    "job_id": job_id,
+                    "quality": quality_result,
+                }
             )
-
+            if report_id is None:
+                raise RuntimeError(f"Report DB 저장 실패: output_dir={output_dir}")
             # 성공 처리
             await job_service.complete_job(job_id)
 

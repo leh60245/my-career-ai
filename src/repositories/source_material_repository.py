@@ -37,7 +37,7 @@ class SourceMaterialRepository(BaseRepository[SourceMaterial]):
             distance_col = self.model.embedding.cosine_distance(query_embedding).label("distance")
 
             stmt = (
-                select(self.model, Company.company_name, distance_col)
+                select(self.model, Company.company_name, distance_col, AnalysisReport.title.label("report_title"))
                 .join(AnalysisReport, self.model.analysis_report_id == AnalysisReport.id)
                 .join(Company, AnalysisReport.company_id == Company.id)
                 .where(self.model.chunk_type != "noise_merged")
