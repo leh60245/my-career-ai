@@ -3,7 +3,7 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-from src.common import EmbeddingService
+from src.common import Embedding
 from src.models import SourceMaterial
 from src.repositories import SourceMaterialRepository
 
@@ -39,9 +39,9 @@ class IngestionService:
     ]
     NOISE_TABLE_MAX_ROWS = 2
 
-    def __init__(self, source_repo: SourceMaterialRepository, embedding_service: EmbeddingService):
+    def __init__(self, source_repo: SourceMaterialRepository, embedding: Embedding):
         self.source_repo = source_repo
-        self.embedding_service = embedding_service
+        self.embedding = embedding
 
     async def save_chunks(self, analysis_report_id: int, chunks: list[dict[str, Any]]) -> Sequence[SourceMaterial]:
         """
@@ -177,8 +177,7 @@ class IngestionService:
             return
 
         # Batch Embedding Call (비동기)
-        # EmbeddingService의 메서드명은 get_embeddings로 통일
-        embeddings = await self.embedding_service.get_embeddings(texts_to_embed)
+        embeddings = await self.embedding.get_embeddings(texts_to_embed)
 
         # 결과 매핑
         for (idx, has_ctx), vec in zip(indices_to_embed, embeddings):

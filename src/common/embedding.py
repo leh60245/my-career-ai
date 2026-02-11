@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 import os
 from abc import ABC, abstractmethod
@@ -93,6 +94,16 @@ class OpenAIEmbedder(BaseEmbedder):
             logger.error(f"Failed to generate embeddings (OpenAI): {e}")
             return []
 
+    async def aclose(self) -> None:
+        if not self.client:
+            return
+        close_fn = getattr(self.client, "aclose", None) or getattr(self.client, "close", None)
+        if not close_fn:
+            return
+        result = close_fn()
+        if inspect.isawaitable(result):
+            await result
+
 
 class HuggingFaceEmbedder(BaseEmbedder):
     """
@@ -165,13 +176,13 @@ class HuggingFaceEmbedder(BaseEmbedder):
             return []
 
 
-class EmbeddingService:
+class Embedding:
     """
     통합 임베딩 서비스 (Singleton & Strategy Pattern)
     IngestionService 및 검색 서비스에서 공통으로 사용
     """
 
-    _instance: Optional["EmbeddingService"] = None
+    _instance: Optional["Embedding"] = None
     _embedder: BaseEmbedder | None = None
 
     def __new__(cls, provider: str | None = None, **kwargs):
@@ -211,6 +222,14 @@ class EmbeddingService:
 
         return await self._embedder.get_embeddings(texts)
 
+    async def aclose(self) -> None:
+        if self._embedder and hasattr(self._embedder, "aclose"):
+            await self._embedder.aclose()
+
     @property
     def dimension(self) -> int:
         return self._embedder.get_dimension()
+
+    @classmethod
+    def get_instance(cls) -> "Embedding" | None:
+        return cls._instance

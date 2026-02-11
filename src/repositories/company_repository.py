@@ -40,6 +40,14 @@ class CompanyRepository(BaseRepository[Company]):
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
+    async def get_all_company_map(self) -> dict[str, int]:
+        """
+        [Memory Cache용] 모든 기업의 {이름: ID} 맵을 반환합니다.
+        """
+        stmt = select(Company.id, Company.company_name)
+        result = await self.session.execute(stmt)
+        return {row.company_name: row.id for row in result.all()}
+
     async def search_by_company_name(self, query: str, limit: int = 10) -> Sequence[Company]:
         """기업 이름으로 부분 일치 검색"""
         try:

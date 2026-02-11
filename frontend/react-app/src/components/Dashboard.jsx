@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Alert,
   Box,
@@ -33,7 +33,16 @@ import {
   generateReport,
 } from '../services/apiService';
 
-const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
+/**
+ * Dashboard 컴포넌트
+ *
+ * Backend API 응답 스키마:
+ *   CompanyResponse:  { id, company_name, corp_code, stock_code, sector, ... }
+ *   ReportSummary:    { job_id, company_name, topic, status, created_at, updated_at }
+ *   ReportJobResponse: { job_id, status, company_name, topic, error_message, created_at, updated_at }
+ */
+const Dashboard = ({ onReportStart, onViewReport }) => {
+  // ─── State ──────────────────────────────────────────────
   const [companies, setCompanies] = useState([]);
   const [topics, setTopics] = useState([]);
   const [reports, setReports] = useState([]);
@@ -43,6 +52,7 @@ const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
   const [metaLoading, setMetaLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // 생성 모달
   const [createOpen, setCreateOpen] = useState(false);
   const [modalCompany, setModalCompany] = useState('');
   const [modalTopic, setModalTopic] = useState('');
@@ -51,6 +61,7 @@ const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
 
   const isCustomTopic = modalTopic === 'custom';
 
+  // ─── Data Loading ───────────────────────────────────────
   const loadReferenceData = async () => {
     try {
       setMetaLoading(true);
@@ -60,8 +71,10 @@ const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
       ]);
       setCompanies(companiesData || []);
       setTopics(topicsData || []);
+
+      // 초기값: company_name 문자열
       if (companiesData?.length) {
-        setModalCompany(companiesData[0]);
+        setModalCompany(companiesData[0].company_name);
       }
       if (topicsData?.length) {
         setModalTopic(topicsData[0].id);
@@ -78,15 +91,8 @@ const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
   const loadReports = async () => {
     try {
       setReportsLoading(true);
-      const params = {
-        company_name: filters.company || undefined,
-        topic: filters.topic || undefined,
-        sort_by: 'created_at',
-        order: 'desc',
-        limit: 50,
-        offset: 0,
-      };
-      const data = await fetchReports(params);
+      // Backend는 limit, offset만 지원 → 필터는 클라이언트에서 처리
+      const data = await fetchReports({ limit: 50, offset: 0 });
       setReports(data?.reports || []);
       setReportsTotal(data?.total || 0);
       setError(null);
@@ -104,8 +110,18 @@ const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
 
   useEffect(() => {
     loadReports();
-  }, [filters.company, filters.topic]);
+  }, []);
 
+  // ─── Client-side Filtering ──────────────────────────────
+  const filteredReports = useMemo(() => {
+    return reports.filter((r) => {
+      if (filters.company && r.company_name !== filters.company) return false;
+      if (filters.topic && r.topic !== filters.topic) return false;
+      return true;
+    });
+  }, [reports, filters]);
+
+  // ─── Create Modal ───────────────────────────────────────
   const openCreateModal = () => {
     setCreateOpen(true);
     setModalCustomTopic('');
@@ -113,7 +129,7 @@ const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
       setModalTopic(topics[0].id);
     }
     if (companies?.length && !modalCompany) {
-      setModalCompany(companies[0]);
+      setModalCompany(companies[0].company_name);
     }
   };
 
@@ -143,20 +159,20 @@ const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
     try {
       setCreating(true);
       const response = await generateReport(modalCompany, finalTopic);
+
+      // Optimistic row (ReportSummary 스키마에 맞춤)
       const optimisticRow = {
-        report_id: response?.report_id || null,
+        job_id: response?.job_id,
         company_name: modalCompany,
         topic: finalTopic,
-        model_name: response?.model_name || 'pending',
-        created_at: new Date().toISOString(),
-        status: 'processing',
-        job_id: response?.job_id,
+        status: response?.status || 'PENDING',
+        created_at: response?.created_at || new Date().toISOString(),
+        updated_at: null,
       };
       setReports((prev) => [optimisticRow, ...prev]);
       setReportsTotal((prev) => prev + 1);
 
       if (response?.job_id) {
-        onJobIdChange(response.job_id);
         onReportStart(response.job_id);
       }
 
@@ -170,24 +186,27 @@ const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
     }
   };
 
-  const renderStatusChip = (status) => {
-    const colorMap = {
-      completed: 'success',
-      processing: 'warning',
-      failed: 'error',
-    };
-    return (
-      <Chip
-        size="small"
-        color={colorMap[status] || 'default'}
-        label={status || 'unknown'}
-      />
-    );
+  // ─── Helpers ────────────────────────────────────────────
+  const STATUS_CONFIG = {
+    COMPLETED: { color: 'success', label: '완료' },
+    PROCESSING: { color: 'warning', label: '처리 중' },
+    PENDING: { color: 'info', label: '대기 중' },
+    FAILED: { color: 'error', label: '실패' },
   };
 
+  const renderStatusChip = (status) => {
+    const upper = (status || '').toUpperCase();
+    const config = STATUS_CONFIG[upper] || { color: 'default', label: status || 'unknown' };
+    return <Chip size="small" color={config.color} label={config.label} />;
+  };
+
+  const truncateId = (id) => (id ? id.substring(0, 8) + '…' : '—');
+
+  // ─── Render ─────────────────────────────────────────────
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
       <Paper elevation={3} sx={{ p: 3 }}>
+        {/* Header */}
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
           <Box>
             <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
@@ -218,11 +237,12 @@ const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
         </Box>
 
         {error && (
-          <Alert severity="error" sx={{ mb: 2 }}>
+          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
             {error}
           </Alert>
         )}
 
+        {/* Filters (client-side) */}
         <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
           <FormControl sx={{ minWidth: 200 }} size="small">
             <InputLabel>기업 필터</InputLabel>
@@ -232,9 +252,9 @@ const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
               onChange={(e) => setFilters((f) => ({ ...f, company: e.target.value }))}
             >
               <MenuItem value="">전체</MenuItem>
-              {companies.map((company) => (
-                <MenuItem key={company.id} value={company.name}>
-                  {company.name}
+              {companies.map((c) => (
+                <MenuItem key={c.id} value={c.company_name}>
+                  {c.company_name}
                 </MenuItem>
               ))}
             </Select>
@@ -248,76 +268,106 @@ const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
               onChange={(e) => setFilters((f) => ({ ...f, topic: e.target.value }))}
             >
               <MenuItem value="">전체</MenuItem>
-              {topics.map((topic) => (
-                <MenuItem key={topic.id} value={topic.label}>
-                  {topic.label}
+              {topics.map((t) => (
+                <MenuItem key={t.id} value={t.label}>
+                  {t.label}
                 </MenuItem>
               ))}
             </Select>
           </FormControl>
         </Box>
 
+        {/* Reports Table */}
         <Paper variant="outlined" sx={{ width: '100%', overflowX: 'auto' }}>
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>ID</TableCell>
+                <TableCell>Job ID</TableCell>
                 <TableCell>기업명</TableCell>
                 <TableCell>분석 주제</TableCell>
-                <TableCell>모델</TableCell>
-                <TableCell>생성 일시</TableCell>
                 <TableCell>상태</TableCell>
+                <TableCell>생성 일시</TableCell>
                 <TableCell align="right">Action</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {reportsLoading ? (
                 <TableRow>
-                  <TableCell colSpan={7} align="center">
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
+                  <TableCell colSpan={6} align="center">
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, py: 2 }}>
                       <CircularProgress size={20} />
                       <Typography variant="body2">리포트를 불러오는 중...</Typography>
                     </Box>
                   </TableCell>
                 </TableRow>
-              ) : reports.length === 0 ? (
+              ) : filteredReports.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} align="center">
-                    <Typography variant="body2">표시할 리포트가 없습니다.</Typography>
+                  <TableCell colSpan={6} align="center">
+                    <Typography variant="body2" sx={{ py: 2 }}>
+                      표시할 리포트가 없습니다.
+                    </Typography>
                   </TableCell>
                 </TableRow>
               ) : (
-                reports.map((row) => (
-                  <TableRow key={`${row.report_id || 'pending'}-${row.company_name}-${row.topic}`} hover>
-                    <TableCell>{row.report_id || '—'}</TableCell>
-                    <TableCell>{row.company_name}</TableCell>
-                    <TableCell>{row.topic}</TableCell>
-                    <TableCell>{row.model_name || '—'}</TableCell>
-                    <TableCell>
-                      {row.created_at
-                        ? new Date(row.created_at).toLocaleString('ko-KR')
-                        : '—'}
-                    </TableCell>
-                    <TableCell>{renderStatusChip(row.status)}</TableCell>
-                    <TableCell align="right">
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        disabled={!row.report_id}
-                        onClick={() => onViewReport && onViewReport(row.report_id)}
-                      >
-                        보기
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))
+                filteredReports.map((row) => {
+                  const jobId = row.job_id || row.id;
+                  const statusUpper = (row.status || '').toUpperCase();
+
+                  return (
+                    <TableRow key={jobId || row.job_id} hover>
+                      <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
+                        {truncateId(jobId)}
+                      </TableCell>
+                      <TableCell>{row.company_name}</TableCell>
+                      <TableCell>{row.topic}</TableCell>
+                      <TableCell>{renderStatusChip(row.status)}</TableCell>
+                      <TableCell>
+                        {row.created_at
+                          ? new Date(row.created_at).toLocaleString('ko-KR')
+                          : '—'}
+                      </TableCell>
+                      <TableCell align="right">
+                        {statusUpper === 'COMPLETED' ? (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="primary"
+                            onClick={() => onViewReport(jobId, row.status)}
+                            disabled={!jobId}
+                          >
+                            보기
+                          </Button>
+                        ) : statusUpper === 'FAILED' ? (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="error"
+                            disabled
+                          >
+                            실패
+                          </Button>
+                        ) : (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            disabled
+                          >
+                            {statusUpper === 'PROCESSING' ? '처리 중…' : '대기 중…'}
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>
         </Paper>
 
         <Typography variant="caption" sx={{ mt: 1, display: 'block' }}>
-          총 {reportsTotal}건
+          {filters.company || filters.topic
+            ? `${filteredReports.length}건 (전체 ${reportsTotal}건 중)`
+            : `총 ${reportsTotal}건`}
         </Typography>
       </Paper>
 
@@ -332,9 +382,9 @@ const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
               value={modalCompany}
               onChange={(e) => setModalCompany(e.target.value)}
             >
-              {companies.map((company) => (
-                <MenuItem key={company.id} value={company.name}>
-                  {company.name}
+              {companies.map((c) => (
+                <MenuItem key={c.id} value={c.company_name}>
+                  {c.company_name}
                 </MenuItem>
               ))}
             </Select>
@@ -347,9 +397,9 @@ const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
               value={modalTopic}
               onChange={(e) => setModalTopic(e.target.value)}
             >
-              {topics.map((topic) => (
-                <MenuItem key={topic.id} value={topic.id}>
-                  {topic.label}
+              {topics.map((t) => (
+                <MenuItem key={t.id} value={t.id}>
+                  {t.label}
                 </MenuItem>
               ))}
             </Select>
@@ -368,7 +418,9 @@ const Dashboard = ({ onReportStart, onJobIdChange, onViewReport }) => {
           )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={closeCreateModal} disabled={creating}>취소</Button>
+          <Button onClick={closeCreateModal} disabled={creating}>
+            취소
+          </Button>
           <Button
             variant="contained"
             onClick={handleGenerate}

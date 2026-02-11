@@ -22,6 +22,8 @@ class SourceMaterial(Base, CreatedAtMixin):
     section_path: Mapped[str] = mapped_column(Text, nullable=False)
     raw_content: Mapped[str] = mapped_column(Text, nullable=False)
     table_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # 벡터 차원은 EMBEDDING_CONFIG['dimension']과 반드시 일치해야 합니다.
+    # 프로바이더 변경(HuggingFace 768D ↔ OpenAI 1536D) 시 함께 수정 필요
     embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
     meta_info: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 

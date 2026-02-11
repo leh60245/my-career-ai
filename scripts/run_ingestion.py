@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.common import EmbeddingService
+from src.common import Embedding
 from src.database import AsyncDatabaseEngine
 from src.repositories import AnalysisReportRepository, CompanyRepository, SourceMaterialRepository
 from src.services import AnalysisService, CompanyService, DartService, IngestionService
@@ -97,7 +97,7 @@ async def run_pipeline(
 
     # 1. 인프라 초기화
     db_engine = AsyncDatabaseEngine()
-    embedding_svc = EmbeddingService()
+    embedding = Embedding()
     dart_svc = DartService()
 
     logger.info("🚀 Initializing Ingestion Pipeline...")
@@ -153,7 +153,7 @@ async def run_pipeline(
         repo_company = CompanyRepository(session)
         repo_analysis = AnalysisReportRepository(session)
 
-        ingest_svc = IngestionService(repo_material, embedding_svc)
+        ingest_svc = IngestionService(repo_material, embedding)
         comp_svc = CompanyService(repo_company)
         anal_svc = AnalysisService(repo_analysis, repo_company)
 

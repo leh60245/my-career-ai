@@ -1,180 +1,114 @@
 """
-STORM Pipeline Service for Backend (v4.1 - Engine Integrated)
-Task ID: PHASE-3-Backend-Integration
-Refactored:
-- Delegated core logic to 'src.engine' package (Builder, IO, Adapter)
-- Simplified orchestration logic
-- Maintains Async/Non-blocking execution architecture
-- Fixed: Moved datetime import to top
+Backend STORM Service (Job Manager)
+
+역할:
+    - 메모리 기반 JOBS dict로 실시간 진행률 관리
+    - src.engine.storm_pipeline에 실행을 위임
+    - 프론트엔드 polling용 상태 조회 API 제공
+
+핵심: 직접 분석하지 않습니다. 분석은 Engine이, DB는 Pipeline이 처리합니다.
+      이 모듈은 "관리"만 합니다.
 """
 
-import asyncio
 import logging
-import os
-import traceback
-from datetime import datetime
+from typing import Any
 
-# Knowledge STORM Imports (Only Runner needed)
-from knowledge_storm import STORMWikiRunner, STORMWikiRunnerArguments
-
-# Common Configuration
-from src.common.config import JOB_STATUS
-from src.database import AsyncDatabaseEngine
-from src.database.repositories import CompanyRepository
-
-# Engine Components (New Architecture)
-from src.engine import (
-    build_hybrid_rm,
-    build_lm_configs,
-    create_run_directory,
-    save_storm_result_to_db,
-    write_run_metadata,
-)
+from src.common.enums import ReportJobStatus
+from src.database.connection import AsyncDatabaseEngine
+from src.services.company_service import CompanyService
+from src.services.report_job_service import ReportJobService
 
 logger = logging.getLogger(__name__)
 
+# ============================================================
+# In-Memory Job State (프론트엔드 polling용)
+# ============================================================
+# DB에도 상태가 기록되지만, 실시간 progress(%) 같은 세밀한 정보는
+# 메모리에서 관리하고 프론트엔드가 빠르게 조회할 수 있게 합니다.
+JOBS: dict[str, dict[str, Any]] = {}
 
-async def run_storm_pipeline(
-    job_id: str,
-    company_name: str,
-    topic: str,
-    jobs_dict: dict,
-    model_provider: str = "openai",
-):
+
+class StormService:
     """
-    Background Task: Orchestrates the STORM pipeline using src.engine components.
-
-    Flow:
-    1. Resolve Company ID (DB)
-    2. Build Engine Components (Configs, RM) via Builder
-    3. Prepare Workspace (IO) via IO module
-    4. Run STORM (Blocking) in ThreadPool
-    5. Save Results (DB) via Adapter
+    FastAPI Background Task에서 호출되는 서비스 클래스.
+    JOBS dict 초기화 → 파이프라인 위임 → 결과 반영.
     """
-    logger.info(f"[{job_id}] 🚀 Starting STORM Pipeline for {company_name}")
 
-    # 1. Update Job Status
-    jobs_dict[job_id]["status"] = JOB_STATUS.PROCESSING.value
-    jobs_dict[job_id]["progress"] = 10
+    def __init__(self) -> None:
+        self.db_engine = AsyncDatabaseEngine()
 
-    try:
-        # 2. Get Company ID (DB Access)
-        # Background task requires its own DB session cycle
-        db_engine = AsyncDatabaseEngine()
-        company_id = None
-
-        async with db_engine.get_session() as session:
-            company_repo = CompanyRepository(session)
-            company = await company_repo.get_by_name(company_name)
+    async def create_job(self, company_name: str, topic: str) -> str:
+        """
+        DB에 Job 레코드를 생성하고, JOBS dict에 초기 상태를 등록합니다.
+        Returns: job_id (UUID)
+        """
+        async with self.db_engine.get_session() as session:
+            # Service 계층을 통한 Company 조회
+            company_service = CompanyService.from_session(session)
+            company = await company_service.get_by_name(company_name)
             if not company:
                 raise ValueError(f"Company '{company_name}' not found in DB")
-            company_id = company.id
 
-        jobs_dict[job_id]["progress"] = 20
-
-        # 3. Build Engine Components (src.engine.builder)
-        # 3-1. LLM Configs
-        lm_configs = build_lm_configs(model_provider)
-
-        # 3-2. Hybrid Retrieval Model (Internal DB + External Search)
-        rm = build_hybrid_rm(company_name=company_name, top_k=10)
-
-        jobs_dict[job_id]["progress"] = 30
-
-        # 4. Prepare Workspace (src.engine.io)
-        base_output_dir = os.path.join("results", "enterprise")
-        output_dir = create_run_directory(
-            base_dir=base_output_dir,
-            company_id=company_id,
-            company_name=company_name,
-            job_id=job_id,
-        )
-
-        # 5. Configure Runner
-        engine_args = STORMWikiRunnerArguments(
-            output_dir=output_dir,
-            max_conv_turn=3,
-            max_perspective=3,
-            search_top_k=10,
-            max_thread_num=3,
-        )
-
-        runner = STORMWikiRunner(engine_args, lm_configs, rm)
-
-        # 6. Run STORM (Blocking Operation)
-        # Offload to ThreadPool to keep FastAPI event loop responsive
-        logger.info(f"[{job_id}] Running STORM engine in background thread...")
-        full_topic = f"{company_name} {topic}"
-
-        loop = asyncio.get_running_loop()
-
-        def _blocking_run():
-            # Metadata recording before run
-            write_run_metadata(
-                output_dir,
-                {
-                    "job_id": job_id,
-                    "company": company_name,
-                    "topic": topic,
-                    "provider": model_provider,
-                    "timestamp": str(datetime.now()),
-                },
+            # Service 계층을 통한 Job 생성
+            job_service = ReportJobService.from_session(session)
+            job_id = await job_service.create_job(
+                company_id=company.id,
+                company_name=company_name,
+                topic=topic,
             )
 
-            # Actual Execution
-            runner.run(
-                topic=full_topic,
-                do_research=True,
-                do_generate_outline=True,
-                do_generate_article=True,
-                do_polish_article=True,
-            )
-            runner.post_run()
-            runner.summary()
-
-        await loop.run_in_executor(None, _blocking_run)
-
-        jobs_dict[job_id]["progress"] = 80
-        logger.info(f"[{job_id}] STORM engine finished.")
-
-        # 7. Save Results (src.engine.adapter)
-        logger.info(f"[{job_id}] Saving results to DB...")
-
-        meta_info = {
-            "job_id": job_id,
-            "output_dir": output_dir,
-            "provider": model_provider,
+        # 메모리 상태 초기화
+        JOBS[job_id] = {
+            "status": ReportJobStatus.PENDING.value,
+            "progress": 0,
+            "message": "작업이 생성되었습니다.",
+            "report_id": None,
         }
 
-        report_id = await save_storm_result_to_db(
-            company_name=company_name,
-            topic=topic,
-            output_dir=output_dir,
-            model_name=model_provider,
-            meta_info=meta_info,
-        )
+        logger.info(f"🆕 [StormService] Job registered: {job_id} ({company_name})")
+        return job_id
 
-        if not report_id:
-            raise RuntimeError(
-                "Failed to save report to database (Adapter returned None)"
+    async def run_pipeline(
+        self,
+        job_id: str,
+        company_name: str,
+        topic: str,
+        model_provider: str = "openai",
+    ) -> None:
+        """
+        Background Task로 실행됩니다.
+        src.engine.storm_pipeline에 모든 실행을 위임합니다.
+        """
+        logger.info(f"🔄 [StormService] Delegating pipeline for job {job_id} ({company_name})")
+
+        try:
+            # Lazy import: knowledge_storm + torch 등 무거운 의존성을 서버 시작 시가 아닌
+            # 파이프라인 실행 시점에만 로드합니다.
+            from src.engine.storm_pipeline import run_storm_pipeline
+
+            await run_storm_pipeline(
+                job_id=job_id,
+                company_name=company_name,
+                topic=topic,
+                jobs_dict=JOBS,
+                model_provider=model_provider,
             )
+        except Exception as e:
+            logger.error(f"❌ [StormService] Pipeline failed for {job_id} ({company_name}): {e}")
+            if job_id in JOBS:
+                JOBS[job_id]["status"] = ReportJobStatus.FAILED.value
+                JOBS[job_id]["message"] = str(e)
+                JOBS[job_id]["progress"] = 0
 
-        # 8. Complete
-        jobs_dict[job_id]["status"] = JOB_STATUS.COMPLETED.value
-        jobs_dict[job_id]["report_id"] = report_id
-        jobs_dict[job_id]["progress"] = 100
-        jobs_dict[job_id]["message"] = "리포트 생성이 완료되었습니다."
+    @staticmethod
+    def get_job_status_from_memory(job_id: str) -> dict[str, Any] | None:
+        """
+        메모리에서 실시간 진행률을 조회합니다.
+        없으면 None (DB 폴백은 API 레이어에서 처리).
+        """
+        return JOBS.get(job_id)
 
-        logger.info(f"[{job_id}] ✅ Pipeline Success. Report ID: {report_id}")
-
-        # Resource Cleanup
-        if hasattr(rm, "close"):
-            rm.close()
-
-    except Exception as e:
-        logger.error(f"[{job_id}] ❌ Pipeline Failed: {e}")
-        traceback.print_exc()
-
-        jobs_dict[job_id]["status"] = JOB_STATUS.FAILED.value
-        jobs_dict[job_id]["message"] = str(e)
-        jobs_dict[job_id]["progress"] = 0
+    @staticmethod
+    def get_all_jobs() -> dict[str, dict[str, Any]]:
+        """현재 메모리에 등록된 모든 Job 상태 반환."""
+        return JOBS

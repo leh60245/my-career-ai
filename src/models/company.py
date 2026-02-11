@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Index, Integer, String, UniqueConstraint
+from sqlalchemy import Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.base import Base, TimestampMixin
@@ -43,8 +43,7 @@ class Company(
     )
 
     __table_args__ = (
-        UniqueConstraint("company_name", name="uq_company_name"),
-        Index("idx_company_corp_code", "corp_code"),
+        # company_name, corp_code의 unique/index는 mapped_column에서 선언 완료
         Index("idx_company_created_at", "created_at"),
     )
 

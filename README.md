@@ -1,12 +1,6 @@
 
 ```
 enterprise-storm
-├─ assets
-│  ├─ co-storm-workflow.jpg
-│  ├─ logo.svg
-│  ├─ overview.svg
-│  ├─ storm_naacl2024_slides.pdf
-│  └─ two_stages.jpg
 ├─ backend
 │  ├─ assets
 │  │  └─ sample_report.md
@@ -14,13 +8,6 @@ enterprise-storm
 │  ├─ storm_service.py
 │  └─ __init__.py
 ├─ docker-compose.yml
-├─ docker-credential-fake.cmd
-├─ docs
-│  ├─ API_SPEC.md
-│  ├─ FEAT-Core-002-HybridRM-Implementation.md
-│  ├─ FEAT-v2.1-dashboard-revolution.md
-│  ├─ FIX-Core-002-PostProcessingBridge.md
-│  └─ TEST_SUITE_DELIVERY.md
 ├─ examples
 │  ├─ costorm_examples
 │  │  └─ run_costorm_gpt.py
@@ -29,39 +16,8 @@ enterprise-storm
 │     │  └─ process_kaggle_arxiv_abstract_dataset.py
 │     ├─ README.md
 │     ├─ run_storm_wiki_claude.py
-│     ├─ run_storm_wiki_deepseek.py
-│     ├─ run_storm_wiki_gemini.py
-│     ├─ run_storm_wiki_gpt.py
-│     ├─ run_storm_wiki_gpt_with_VectorRM.py
-│     ├─ run_storm_wiki_groq.py
-│     ├─ run_storm_wiki_mistral.py
-│     ├─ run_storm_wiki_ollama.py
-│     ├─ run_storm_wiki_ollama_with_searxng.py
-│     └─ run_storm_wiki_serper.py
 ├─ frontend
 │  └─ react-app
-│     ├─ .eslintrc.json
-│     ├─ dist
-│     │  ├─ assets
-│     │  │  ├─ index-B4GJRnWF.js
-│     │  │  ├─ index-B4GJRnWF.js.map
-│     │  │  └─ index-CVkp-3zK.css
-│     │  └─ index.html
-│     ├─ index.html
-│     ├─ package-lock.json
-│     ├─ package.json
-│     ├─ README.md
-│     ├─ src
-│     │  ├─ App.jsx
-│     │  ├─ components
-│     │  │  ├─ Dashboard.jsx
-│     │  │  └─ ReportViewer.jsx
-│     │  ├─ index.css
-│     │  ├─ main.jsx
-│     │  ├─ services
-│     │  │  └─ apiService.js
-│     │  └─ styles
-│     │     └─ ReportViewer.css
 │     └─ vite.config.js
 ├─ knowledge_storm
 │  ├─ collaborative_storm
@@ -133,10 +89,6 @@ enterprise-storm
 │  │  ├─ README.md
 │  │  ├─ retriever.py
 │  │  └─ __init__.py
-│  ├─ ingestion
-│  │  ├─ embedding_worker.py
-│  │  ├─ pipeline.py
-│  │  └─ __init__.py
 │  ├─ models
 │  │  ├─ analysis_report.py
 │  │  ├─ base.py
@@ -187,19 +139,12 @@ enterprise-storm
 │  │  ├─ test_generation_service.py
 │  │  └─ __init__.py
 │  └─ __init__.py
-└─ typings
-   └─ dspy
-      ├─ adapters
-      ├─ datasets
-      ├─ evaluate
-      ├─ experimental
-      │  └─ synthesizer
-      ├─ functional
-      ├─ predict
-      ├─ primitives
-      ├─ retrieve
-      ├─ signatures
-      ├─ teleprompt
-      └─ utils
+
+## Database schema notes
+
+- `src/database/migrations` is kept for developer use only (local schema checks, experiments).
+- Production or shared environments should use a controlled migration process, but this repo does not enforce Alembic at runtime.
+- For local runs without Alembic, set `AUTO_CREATE_SCHEMA=1` to create tables from models at startup.
+
 
 ```

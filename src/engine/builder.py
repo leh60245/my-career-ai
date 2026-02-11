@@ -1,20 +1,10 @@
-"""
-STORM Engine Builder Module
-LLM 설정(LMConfigs)과 검색 엔진(Retrieval Model) 객체를 생성합니다.
-"""
-
 import logging
 import os
 
-# Knowledge STORM Imports
 from knowledge_storm import STORMWikiLMConfigs
 from knowledge_storm.lm import AzureOpenAIModel, GoogleModel, OpenAIModel
-from knowledge_storm.rm import SerperRM
-from knowledge_storm.utils import load_api_key
-
-# Configuration
-from src.common.config import AI_CONFIG
-from src.engine.retriever import HybridRM, PostgresRM
+from src.common import AI_CONFIG
+from src.engine.retriever import HybridRM
 
 logger = logging.getLogger(__name__)
 
@@ -85,27 +75,15 @@ def build_lm_configs(provider: str = "openai") -> STORMWikiLMConfigs:
     return lm_configs
 
 
-def build_hybrid_rm(
-    company_name: str, top_k: int = 10, min_score: float = 0.5
-) -> HybridRM:
+def build_hybrid_rm(company_name: str, top_k: int = 10, min_score: float = 0.5) -> HybridRM:
     """
-    PostgresRM(내부) + SerperRM(외부)을 결합한 HybridRM을 생성합니다.
+    HybridRM 생성 (데이터 로딩은 RM 내부에서 Lazy하게 수행됨)
     """
-    # 1. Internal RM (Postgres)
-    # 초기화 시 DB 연결은 sync engine을 사용하지만, 검색은 빠릅니다.
-    internal_rm = PostgresRM(k=top_k, min_score=min_score)
+    # 내부/외부 비율 설정 (예: 반반)
+    half_k = max(1, top_k // 2)
 
-    logger.info(f"✓ Internal RM initialized (k={top_k})")
+    # 단순히 객체만 생성해서 리턴하면 끝
+    hybrid_rm = HybridRM(internal_k=half_k, external_k=half_k)
 
-    # 2. External RM (Serper)
-    serper_key = AI_CONFIG.get("serper_api_key") or load_api_key("SERPER_API_KEY")
-
-    external_rm = SerperRM(serper_search_api_key=serper_key, k=top_k)
-    logger.info(f"✓ External RM initialized (k={top_k})")
-
-    # 3. Hybrid RM (Ratio 3:7)
-    # 내부 문서보다 최신 웹 정보에 가중치를 조금 더 둠 (조정 가능)
-    hybrid_rm = HybridRM(internal_rm, external_rm, internal_k=3, external_k=7)
-    logger.info("✓ HybridRM assembled (3:7 ratio)")
-
+    logger.info(f"✓ HybridRM initialized (Total k={top_k})")
     return hybrid_rm

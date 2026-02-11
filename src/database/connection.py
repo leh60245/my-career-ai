@@ -5,29 +5,22 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from dotenv import load_dotenv
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import declarative_base
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
-# [수정 2] .env 파일 로드 (이게 없으면 os.getenv가 아무것도 못 가져옵니다)
+from src.models.base import Base
+
+# .env 파일 로드
 load_dotenv()
 
 logger = logging.getLogger(__name__)
-Base = declarative_base()
 
 # 환경 변수 설정
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD")  # .env가 로드되어야 값을 가져옴
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "postgres")
-
-# [안전장치] 비밀번호가 없으면 연결 시도 전에 알려줌
-if not DB_PASSWORD:
-    # 로컬 개발 편의를 위해 하드코딩된 fallback을 쓸 수도 있지만,
-    # 명시적으로 에러를 내는 것이 설정 실수를 잡기 좋습니다.
-    # 하지만 님 상황(1234)에 맞춰 fallback을 넣어드리겠습니다.
-    logger.warning("⚠️ DB_PASSWORD not found in env. Using default '1234'.")
-    DB_PASSWORD = "1234"
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_NAME = os.getenv("DB_NAME")
 
 DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
@@ -69,6 +62,24 @@ class AsyncDatabaseEngine:
 
         logger.info(f"✅ AsyncDatabaseEngine initialized: {DB_HOST}:{DB_PORT}/{DB_NAME}")
 
+    async def initialize(self) -> None:
+        """
+        FastAPI lifespan에서 호출하는 초기화 메서드.
+        엔진은 __init__에서 이미 생성되므로,
+        여기서는 연결 확인 + 풀 워밍업 + 선택적 스키마 생성을 처리합니다.
+        """
+        # 커넥션 풀 워밍업: 첫 API 요청 시 지연을 방지
+        try:
+            async with self.engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+            logger.info("✅ Database connection pool warmed up")
+        except Exception as e:
+            logger.warning(f"⚠️ DB warmup failed (will retry on first request): {e}")
+
+        if os.getenv("AUTO_CREATE_SCHEMA") == "1":
+            logger.warning("⚠️ AUTO_CREATE_SCHEMA=1: Creating DB schema from models.")
+            await ensure_schema()
+
     @asynccontextmanager
     async def get_session(self) -> AsyncGenerator[AsyncSession, None]:
         """
@@ -96,3 +107,31 @@ class AsyncDatabaseEngine:
             self.session_factory = None
             AsyncDatabaseEngine._instance = None
             logger.info("🗑️ AsyncDatabaseEngine disposed.")
+
+
+async def ensure_schema(reset: bool = False) -> None:
+    """
+    Alembic 없이 모델 기반으로 스키마를 생성합니다.
+    개발/테스트 환경에서만 사용하세요.
+    """
+    # 모델 등록을 위해 임포트 (Base.metadata 채우기)
+    from src.models import analysis_report, company, generated_report, report_job, source_material  # noqa: F401
+
+    db = AsyncDatabaseEngine()
+    async with db.engine.begin() as conn:
+        if reset:
+            await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+
+def create_isolated_engine() -> AsyncEngine:
+
+    db_url = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+    return create_async_engine(
+        db_url,
+        echo=False,
+        pool_pre_ping=True,
+        # 스레드마다 별도 연결이므로 풀 사이즈를 작게 유지
+        pool_size=2,
+        max_overflow=5
+    )

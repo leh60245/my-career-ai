@@ -34,3 +34,33 @@ class ReportJobRepository(BaseRepository[ReportJob]):
         )
         result = await self.session.execute(stmt)
         return result.scalar() or 0
+
+    async def get_failed_jobs(self) -> Sequence[ReportJob]:
+        stmt = (
+            select(self.model)
+            .where(self.model.status == ReportJobStatus.FAILED)
+            .order_by(self.model.created_at.desc())
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def count(self) -> int:
+        """전체 Job 수를 반환합니다."""
+        from sqlalchemy import func
+
+        stmt = select(func.count()).select_from(self.model)
+        result = await self.session.execute(stmt)
+        return result.scalar() or 0
+
+    async def list_recent(
+        self, *, limit: int = 20, offset: int = 0
+    ) -> Sequence[ReportJob]:
+        """최신 순으로 Job 목록을 반환합니다."""
+        stmt = (
+            select(self.model)
+            .order_by(self.model.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()

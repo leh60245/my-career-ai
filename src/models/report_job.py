@@ -23,6 +23,9 @@ class ReportJob(Base, TimestampMixin):
     company_name: Mapped[str] = mapped_column(String(255), nullable=False)
     topic: Mapped[str] = mapped_column(String, nullable=False)
 
+    # error message if any
+    error_message: Mapped[str | None] = mapped_column(String, nullable=True)
+
     # Relationships
     company: Mapped["Company"] = relationship("Company", back_populates="report_jobs")
     generated_report: Mapped["GeneratedReport | None"] = relationship(

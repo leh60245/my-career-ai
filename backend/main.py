@@ -1,60 +1,55 @@
 """
-FastAPI Backend API for Enterprise STORM Frontend Integration (v3.1)
-Task ID: PHASE-3-Backend-Integration
-Target: Service Layer Integration Fixes & DB Save Reliability
+Enterprise STORM API (FastAPI)
 
-✅ Phase 3.1 Changes:
-- Fixed Service method calls (Removed redundant 'session' arguments)
-- Removed redundant session context managers in endpoints
-- Integrated robust background task execution for DB saving
+역할:
+    - 프론트엔드(React)와 통신하는 HTTP API 계층
+    - StormService를 통해 백그라운드 파이프라인 실행/상태 관리
+    - Service 계층을 통해 DB 조회 (Controller → Service → Repository)
+
+구조:
+    main.py (Controller) → src/services (Service) → src/repositories (Repository)
 """
 
 import logging
-import uuid
-from datetime import datetime
-from typing import Any
+from collections.abc import AsyncGenerator
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict
+from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
-# Background Service
-from backend.storm_service import run_storm_pipeline
-from src.common.config import (
-    JOB_STATUS,
-    get_canonical_company_name,
-    get_topic_list_for_api,
+from backend.storm_service import StormService
+from src.common.config import TOPICS
+from src.database.connection import AsyncDatabaseEngine
+from src.schemas import (
+    CompanyResponse,
+    GeneratedReportResponse,
+    GenerateReportRequest,
+    ReportJobResponse,
+    ReportListResponse,
+    ReportSummary,
 )
+from src.services.company_service import CompanyService
+from src.services.generated_report_service import GeneratedReportService
+from src.services.report_job_service import ReportJobService
 
-# Service Layer & Database Engine
-from src.database import AsyncDatabaseEngine
-from src.database.repositories import CompanyRepository, GeneratedReportRepository
-from src.services import CompanyService, GenerationService
-
-# Setup logging
+# ============================================================
+# Setup
+# ============================================================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ============================================================
-# FastAPI App Initialization
-# ============================================================
+db_engine = AsyncDatabaseEngine()
+storm_service = StormService()
+
 app = FastAPI(
     title="Enterprise STORM API",
-    description="AI-powered Corporate Report Generation API (v3.1 - Refactored)",
-    version="3.1.0",
+    description="AI-powered Corporate Report Generation API",
+    version="4.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
 
-# ============================================================
-# Global State
-# ============================================================
-JOBS = {}
-db_engine = AsyncDatabaseEngine()
-
-# ============================================================
-# CORS Middleware
-# ============================================================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -63,288 +58,228 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ============================================================
-# Pydantic Models
-# ============================================================
-
-
-class GenerateRequest(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {"company_name": "SK하이닉스", "topic": "재무 분석"}
-        }
-    )
-    company_name: str
-    topic: str = "종합 분석"
-
-
-class CompanyInfo(BaseModel):
-    id: int
-    name: str
-
-
-class JobStatusResponse(BaseModel):
-    job_id: str
-    status: str
-    report_id: int | None = None
-    progress: int | None = None
-    message: str | None = None
-
-
-class ReportResponse(BaseModel):
-    report_id: int
-    company_name: str
-    topic: str
-    report_content: str
-    toc_text: str | None = None
-    references: dict[str, Any] | None = None
-    meta_info: dict[str, Any] | None = None
-    model_name: str | None = "gpt-4o"
-    created_at: str | None = None
-    status: str = "completed"
-
-
-class ReportSummary(BaseModel):
-    report_id: int
-    company_id: int | None = None
-    company_name: str
-    topic: str
-    model_name: str | None
-    created_at: str | None
-    status: str
-
-
-class ReportListResponse(BaseModel):
-    total: int
-    reports: list[ReportSummary]
-
 
 # ============================================================
-# Dependency Injection
+# Lifecycle
 # ============================================================
-
-
-async def get_company_service():
-    """Dependency: CompanyService with active session"""
-    async with db_engine.get_session() as session:
-        repo = CompanyRepository(session)
-        service = CompanyService(repo)
-        yield service
-
-
-async def get_generation_service():
-    """Dependency: GenerationService with active session"""
-    async with db_engine.get_session() as session:
-        generated_repo = GeneratedReportRepository(session)
-        company_repo = CompanyRepository(session)
-        service = GenerationService(generated_repo, company_repo)
-        yield service
-
-
-# ============================================================
-# Lifecycle Events
-# ============================================================
-
-
 @app.on_event("startup")
 async def startup_event():
-    """
-    [Modified] DB 엔진 초기화를 명시적으로 호출합니다.
-    """
-    logger.info("🚀 Starting Enterprise STORM API v3.1...")
+    logger.info("🚀 Starting Enterprise STORM API v4.0...")
     await db_engine.initialize()
-    logger.info("✓ AsyncDatabaseEngine initialized")
+    logger.info("✓ Database ready")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """
-    [Modified] DB 엔진 리소스를 정리합니다.
-    """
     logger.info("🛑 Shutting down API...")
     await db_engine.dispose()
+    try:
+        from src.common.embedding import Embedding
+
+        embedding = Embedding.get_instance()
+        if embedding:
+            await embedding.aclose()
+    except Exception as e:
+        logger.warning(f"Embedding client close skipped: {e}")
     logger.info("✓ Database connections closed")
 
 
 # ============================================================
-# API Endpoints
+# Dependencies (Service Factory — Controller는 Service만 사용)
 # ============================================================
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI Depends용 세션 제공."""
+    async with db_engine.get_session() as session:
+        yield session
 
 
+async def get_company_service(
+    session: AsyncSession = Depends(get_session),
+) -> CompanyService:
+    return CompanyService.from_session(session)
+
+
+async def get_report_job_service(
+    session: AsyncSession = Depends(get_session),
+) -> ReportJobService:
+    return ReportJobService.from_session(session)
+
+
+async def get_generated_report_service(
+    session: AsyncSession = Depends(get_session),
+) -> GeneratedReportService:
+    return GeneratedReportService.from_session(session)
+
+
+# ============================================================
+# Health & Reference Endpoints
+# ============================================================
 @app.get("/")
 async def root():
-    return {"status": "operational", "version": "3.1.0", "mode": "service-layer-fixed"}
+    return {"status": "operational", "version": "4.0.0"}
 
 
-@app.get("/api/companies", response_model=list[CompanyInfo])
-async def get_companies(service: CompanyService = Depends(get_company_service)):
-    """
-    [Modified] Service Layer 호출 시 불필요한 session 인자를 제거했습니다.
-    """
-    try:
-        # service.list_companies()는 session 인자를 받지 않습니다 (Repository가 내부적으로 가지고 있음)
-        companies = await service.list_companies(limit=100)
-        return [CompanyInfo(id=c.id, name=c.company_name) for c in companies]
-    except Exception as e:
-        logger.error(f"Error fetching companies: {e}")
-        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
+@app.get("/api/companies", response_model=list[CompanyResponse])
+async def get_companies(
+    service: CompanyService = Depends(get_company_service),
+):
+    return await service.get_all_companies(limit=100)
 
 
 @app.get("/api/topics")
 async def get_topics():
-    return get_topic_list_for_api()
+    return [{"id": t["id"], "label": t["label"]} for t in TOPICS]
 
 
-@app.post("/api/generate", response_model=JobStatusResponse)
-async def generate_report(request: GenerateRequest, background_tasks: BackgroundTasks):
-    """
-    [Modified] storm_service.run_storm_pipeline을 백그라운드 작업으로 등록합니다.
-    """
-    try:
-        company_name = get_canonical_company_name(request.company_name.strip())
-        topic = request.topic.strip()
-        job_id = f"job-{uuid.uuid4()}"
-
-        JOBS[job_id] = {
-            "status": JOB_STATUS.PROCESSING.value,
-            "company_name": company_name,
-            "topic": topic,
-            "progress": 0,
-            "created_at": datetime.now().isoformat(),
-        }
-
-        # [Refactor] DB 연결을 독립적으로 관리하는 새로운 백그라운드 서비스 사용
-        background_tasks.add_task(
-            run_storm_pipeline,
-            job_id=job_id,
-            company_name=company_name,
-            topic=topic,
-            jobs_dict=JOBS,
-        )
-
-        return JobStatusResponse(
-            job_id=job_id,
-            status=JOB_STATUS.PROCESSING.value,
-            progress=0,
-            message=f"Starting generation for {company_name}",
-        )
-    except Exception as e:
-        logger.error(f"Generate error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/status/{job_id}", response_model=JobStatusResponse)
-async def get_job_status(job_id: str):
-    if job_id not in JOBS:
-        raise HTTPException(status_code=404, detail="Job not found")
-    job = JOBS[job_id]
-    return JobStatusResponse(
-        job_id=job_id,
-        status=job.get("status"),
-        report_id=job.get("report_id"),
-        progress=job.get("progress", 0),
-        message=job.get("message"),
-    )
-
-
-@app.get("/api/report/{report_id}", response_model=ReportResponse)
-async def get_report(
-    report_id: int, service: GenerationService = Depends(get_generation_service)
+# ============================================================
+# Report Generation (핵심 Flow)
+# ============================================================
+@app.post("/api/generate", response_model=ReportJobResponse)
+async def request_report_generation(
+    request: GenerateReportRequest,
+    background_tasks: BackgroundTasks,
+    job_service: ReportJobService = Depends(get_report_job_service),
 ):
     """
-    [Modified] Service Layer 호출 시 불필요한 session 인자를 제거했습니다.
+    1. DB에 Job 생성 (PENDING)
+    2. BackgroundTasks로 파이프라인 위임
+    3. job_id 즉시 반환 → 프론트에서 polling
     """
+    company_name = request.company_name.strip()
+    topic = request.topic.strip()
+
     try:
-        report = await service.get_report_by_id(report_id)
-
-        if not report:
-            raise HTTPException(status_code=404, detail="Report not found")
-
-        return ReportResponse(
-            report_id=report.id,
-            company_name=report.company_name,
-            topic=report.topic,
-            report_content=report.report_content,
-            toc_text=report.toc_text,
-            references=report.references_data,
-            meta_info=report.meta_info,
-            model_name=report.model_name,
-            created_at=report.created_at.isoformat() if report.created_at else None,
-            status=JOB_STATUS.COMPLETED.value,
+        job_id = await storm_service.create_job(
+            company_name=company_name,
+            topic=topic,
         )
-    except HTTPException:
-        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
     except Exception as e:
-        logger.error(f"Error fetching report: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Job creation failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create job") from e
+
+    # 백그라운드로 파이프라인 실행 등록
+    background_tasks.add_task(
+        storm_service.run_pipeline,
+        job_id=job_id,
+        company_name=company_name,
+        topic=topic,
+    )
+
+    # Service를 통해 Job 조회하여 응답
+    job = await job_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=500, detail="Job created but not found in DB")
+
+    return job
+
+
+# ============================================================
+# Job Status (Polling)
+# ============================================================
+@app.get("/api/status/{job_id}")
+async def get_job_status(
+    job_id: str,
+    job_service: ReportJobService = Depends(get_report_job_service),
+):
+    """
+    1차: 메모리(JOBS)에서 실시간 progress 조회
+    2차: 메모리에 없으면 DB 폴백
+    """
+    # 메모리 조회 (실시간 progress 포함)
+    mem_status = storm_service.get_job_status_from_memory(job_id)
+    if mem_status:
+        return {
+            "job_id": job_id,
+            "status": mem_status["status"],
+            "progress": mem_status["progress"],
+            "message": mem_status.get("message", ""),
+            "report_id": mem_status.get("report_id"),
+        }
+
+    # DB 폴백 (서버 재시작 후 등) — Service 계층 사용
+    job = await job_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # 프론트엔드 기대 형식에 맞추어 반환 (메모리 응답과 동일 구조)
+    status_str = job.status.value if hasattr(job.status, 'value') else str(job.status)
+    return {
+        "job_id": job.id,
+        "status": status_str,
+        "progress": 100 if status_str == "COMPLETED" else 0,
+        "message": job.error_message or "",
+        "report_id": None,
+    }
+
+
+# ============================================================
+# Report Retrieval
+# ============================================================
+@app.get("/api/report/{report_id}", response_model=GeneratedReportResponse)
+async def get_report(
+    report_id: int,
+    service: GeneratedReportService = Depends(get_generated_report_service),
+):
+    """리포트 PK(int)로 조회"""
+    report = await service.get_report(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return report
+
+
+@app.get("/api/report/by-job/{job_id}", response_model=GeneratedReportResponse)
+async def get_report_by_job_id(
+    job_id: str,
+    service: GeneratedReportService = Depends(get_generated_report_service),
+):
+    """Job ID(UUID)로 리포트 조회"""
+    report = await service.get_report_by_job_id(job_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return report
 
 
 @app.get("/api/reports", response_model=ReportListResponse)
 async def list_reports(
-    company_name: str | None = None,
-    topic: str | None = None,
-    limit: int = 10,
+    limit: int = 20,
     offset: int = 0,
-    service: GenerationService = Depends(get_generation_service),
+    job_service: ReportJobService = Depends(get_report_job_service),
 ):
-    """
-    [Modified] Service Layer의 list_reports 메서드를 사용하도록 변경했습니다.
-    """
-    try:
-        filters = {}
-        if company_name:
-            filters["company_name"] = company_name
-        if topic:
-            filters["topic"] = topic
+    """최신 순으로 Job 목록을 조회합니다."""
+    total, jobs = await job_service.list_jobs(limit=limit, offset=offset)
 
-        # [Refactor] Repository 직접 접근 대신 Service 메서드 사용
-        reports = await service.list_reports(
-            filters=filters, limit=limit, offset=offset
-        )
+    summaries = [ReportSummary.model_validate(job) for job in jobs]
 
-        # 전체 개수 조회 (Service 메서드 활용)
-        total = await service.count_reports(filters=filters)
-
-        summaries = [
-            ReportSummary(
-                report_id=r.id,
-                company_id=r.company_id,
-                company_name=r.company_name,
-                topic=r.topic,
-                model_name=r.model_name,
-                created_at=r.created_at.isoformat() if r.created_at else None,
-                status=JOB_STATUS.COMPLETED.value,
-            )
-            for r in reports
-        ]
-
-        return ReportListResponse(total=total, reports=summaries)
-    except Exception as e:
-        logger.error(f"Error listing reports: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return ReportListResponse(total=total, reports=summaries)
 
 
 # ============================================================
-# Error Handlers
+# Error Handler
 # ============================================================
-
-
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
-    return {
-        "error": "Not Found",
-        "message": "요청한 리소스를 찾을 수 없습니다.",
-        "path": str(request.url),
-    }
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "Not Found",
+            "message": "요청한 리소스를 찾을 수 없습니다.",
+            "path": str(request.url),
+        },
+    )
 
 
 @app.exception_handler(500)
 async def internal_error_handler(request, exc):
-    return {
-        "error": "Internal Server Error",
-        "message": "서버 내부 오류가 발생했습니다. 관리자에게 문의하세요.",
-        "detail": str(exc),
-    }
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal Server Error",
+            "message": "서버 내부 오류가 발생했습니다. 관리자에게 문의하세요.",
+            "detail": str(exc),
+        },
+    )
 
 
 # ============================================================
@@ -355,8 +290,8 @@ async def internal_error_handler(request, exc):
 1. 프로젝트 루트 디렉토리로 이동
 2. 터미널에서 실행:
 
-   # 개발 모드 (자동 리로드)
-   python -m uvicorn backend.main:app --reload --port 8000
+   # 개발 모드 (자동 리로드 — 소스 디렉토리만 감시)
+   python -m uvicorn backend.main:app --reload --port 8000 --reload-dir backend --reload-dir src
 
    # 프로덕션 모드
    python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 4

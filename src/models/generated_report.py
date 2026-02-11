@@ -16,6 +16,8 @@ class GeneratedReport(Base, CreatedAtMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     job_id: Mapped[str] = mapped_column(String, ForeignKey("report_jobs.job_id"), nullable=False)
 
+    company_name: Mapped[str] = mapped_column(String(255), nullable=False)  # 비정규화 (조회 편의)
+    topic: Mapped[str] = mapped_column(String, nullable=False)
     report_content: Mapped[str] = mapped_column(Text, nullable=False)
     toc_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     references_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

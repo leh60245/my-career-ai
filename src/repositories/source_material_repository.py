@@ -2,13 +2,14 @@ from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import and_, delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import AnalysisReport, Company, SourceMaterial
 from src.repositories.base_repository import BaseRepository, RepositoryError
 
 
 class SourceMaterialRepository(BaseRepository[SourceMaterial]):
-    def __init__(self, session):
+    def __init__(self, session: AsyncSession):
         super().__init__(SourceMaterial, session)
 
     async def get_by_analysis_report_id(self, analysis_report_id: int) -> Sequence[SourceMaterial]:

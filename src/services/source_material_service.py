@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Sequence
 
-from src.common import EmbeddingService
+from src.common import Embedding
 from src.models import SourceMaterial
 from src.repositories import SourceMaterialRepository
 from src.schemas import SearchResult
@@ -18,11 +18,11 @@ class SourceMaterialService:
     def __init__(
         self,
         source_material_repo: SourceMaterialRepository,
-        embedding_service: EmbeddingService,
+        embedding: Embedding,
         reranker_service: RerankerService,
     ) -> None:
         self.repo = source_material_repo
-        self.embedding = embedding_service
+        self.embedding = embedding
         self.reranker = reranker_service
 
     async def search(
@@ -65,7 +65,7 @@ class SourceMaterialService:
         DB의 Raw 결과(Row)를 표준 SearchResult 스키마로 변환하고,
         필요 시 다음 청크(Table)를 찾아 내용을 보강합니다.
         """
-        results: Sequence[SearchResult] = []
+        results: list[SearchResult] = []
 
         for row in raw_rows:
             # SourceMaterialRepository.search_by_vector의 반환값 구조에 맞춤

@@ -8,7 +8,7 @@ class GeneratedReportBase(BaseModel):
     """Base schema for GeneratedReport"""
 
     # Required fields
-    company_name: str = Field(..., max_length=100, description="Company name")
+    company_name: str = Field(..., max_length=255, description="Company name")
     topic: str = Field(..., description="Analysis topic/query")
     report_content: str = Field(..., description="Full Markdown/HTML report")
     # Optional fields
@@ -23,7 +23,7 @@ class GeneratedReportResponse(GeneratedReportBase):
     """Schema for GeneratedReport response (GET response)"""
 
     id: int
-    company_id: int | None
+    job_id: str
     created_at: datetime | None
 
     model_config = ConfigDict(
@@ -31,8 +31,8 @@ class GeneratedReportResponse(GeneratedReportBase):
         json_schema_extra={
             "example": {
                 "id": 1,
+                "job_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
                 "company_name": "삼성전자",
-                "company_id": 1,
                 "topic": "재무 분석",
                 "report_content": "# 삼성전자 재무 분석\n\n## 1. 개요\n...",
                 "toc_text": "1. 개요\n2. 재무 상태\n3. 전망",
@@ -41,7 +41,6 @@ class GeneratedReportResponse(GeneratedReportBase):
                 "meta_info": {"search_queries": ["삼성전자 재무"]},
                 "model_name": "gpt-4o",
                 "created_at": "2024-01-15T10:30:00",
-                "updated_at": "2024-01-15T10:30:00",
             }
         },
     )
@@ -50,13 +49,13 @@ class GeneratedReportResponse(GeneratedReportBase):
 class GeneratedReportCreate(GeneratedReportBase):
     """Schema for creating a new GeneratedReport (POST request)"""
 
-    company_id: int | None = Field(None, description="Foreign key to companies (optional)")
+    job_id: str = Field(..., description="Foreign key to report_jobs")
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "job_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
                 "company_name": "삼성전자",
-                "company_id": 1,
                 "topic": "재무 분석",
                 "report_content": "# 삼성전자 재무 분석\n\n## 1. 개요\n...",
                 "toc_text": "1. 개요\n2. 재무 상태\n3. 전망",
@@ -87,8 +86,8 @@ class GeneratedReportListItem(BaseModel):
     """Schema for GeneratedReport list item (compact view)"""
 
     id: int
+    job_id: str
     company_name: str
-    company_id: int | None
     topic: str
     model_name: str
     created_at: datetime

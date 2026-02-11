@@ -123,6 +123,12 @@ def _safe_read_text(path: str) -> str | None:
         try:
             with open(path, encoding="utf-8") as f:
                 return f.read()
+        except UnicodeDecodeError:
+            try:
+                with open(path, encoding="cp949") as f:
+                    return f.read()
+            except Exception:
+                return None
         except Exception:
             return None
     return None
