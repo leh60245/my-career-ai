@@ -46,6 +46,10 @@ class PostgresRM(dspy.Retrieve):
         self.usage = 0
         return {"PostgresRM": usage}
 
+    async def aclose(self) -> None:
+        if hasattr(self.embedding, "aclose"):
+            await self.embedding.aclose()
+
     def forward(
         self,
         query_or_queries: str | list[str],
@@ -238,6 +242,8 @@ class HybridRM(dspy.Retrieve):
 
     async def aclose(self) -> None:
         """Release async clients held by analyzer to avoid loop-closed errors."""
+        if self.internal_rm and hasattr(self.internal_rm, "aclose"):
+            await self.internal_rm.aclose()
         if self.analyzer and hasattr(self.analyzer, "aclose"):
             await self.analyzer.aclose()
         self.analyzer = None
