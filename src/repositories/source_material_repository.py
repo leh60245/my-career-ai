@@ -1,14 +1,15 @@
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import AnalysisReport, Company, SourceMaterial
-from src.repositories import BaseRepository, RepositoryError
+from src.repositories.base_repository import BaseRepository, RepositoryError
 
 
 class SourceMaterialRepository(BaseRepository[SourceMaterial]):
-    def __init__(self, session):
+    def __init__(self, session: AsyncSession):
         super().__init__(SourceMaterial, session)
 
     async def get_by_analysis_report_id(self, analysis_report_id: int) -> Sequence[SourceMaterial]:
@@ -104,7 +105,8 @@ class SourceMaterialRepository(BaseRepository[SourceMaterial]):
                 new_objects.append(material)
 
             self.session.add_all(new_objects)
-            await self.session.flush()  # DB에 반영하여 ID 생성
+            await self.session.flush()
+
             return new_objects
 
         except Exception as e:
@@ -127,3 +129,49 @@ class SourceMaterialRepository(BaseRepository[SourceMaterial]):
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_pending_embeddings(self, limit: int | None = None, force: bool = False) -> Sequence[SourceMaterial]:
+        """
+        임베딩이 필요한 청크 조회
+        - force=False: embedding이 None인 것만
+        - chunk_type != 'noise_merged' (이미 병합된 노이즈는 제외)
+        """
+        stmt = select(self.model).where(self.model.chunk_type != "noise_merged")
+
+        if not force:
+            stmt = stmt.where(self.model.embedding.is_(None))
+
+        stmt = stmt.order_by(
+            self.model.analysis_report_id.asc(),
+            self.model.sequence_order.asc(),
+            self.model.id.asc(),
+        )
+
+        if limit:
+            stmt = stmt.limit(limit)
+
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_previous_neighbor(self, analysis_report_id: int, current_seq: int) -> SourceMaterial | None:
+        """
+        현재 시퀀스 바로 직전의 청크 조회 (Context Look-back 용)
+        """
+        stmt = (
+            select(self.model)
+            .where(self.model.analysis_report_id == analysis_report_id, self.model.sequence_order < current_seq)
+            .order_by(self.model.sequence_order.desc())  # 역순 정렬해서
+            .limit(1)  # 첫 번째 것 (가장 가까운 과거)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def delete_by_analysis_report_id(self, analysis_report_id: int) -> int:
+        """
+        특정 리포트의 모든 청크를 삭제합니다.
+        """
+        stmt = delete(SourceMaterial).where(SourceMaterial.analysis_report_id == analysis_report_id)
+        result = await self.session.execute(stmt)
+        await self.session.flush()
+
+        return result.rowcount

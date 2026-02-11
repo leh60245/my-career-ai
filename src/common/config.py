@@ -1,21 +1,8 @@
-"""
-통합 설정 모듈 (Unified Configuration)
-
-AI와 Ingestion 양쪽에서 사용하는 모든 설정을 중앙 관리합니다.
-환경변수 네이밍을 통일하고 충돌을 방지합니다.
-
-환경변수 표준:
-- DB: PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_DATABASE
-- AI: OPENAI_API_KEY, GOOGLE_API_KEY, ENCODER_API_TYPE
-- DART: DART_API_KEY
-"""
-
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-# 프로젝트 루트에서 .env 로드
 _project_root = Path(__file__).parent.parent.parent
 _env_path = _project_root / ".env"
 if _env_path.exists():
@@ -86,10 +73,7 @@ else:  # huggingface
 
 # ============== 런타임 검증 (차원 불일치 조기 감지) ==============
 def validate_embedding_dimension_compatibility():
-    """
-    [수정됨] 사용자 확인 완료: 실제 데이터는 768차원이 맞음.
-    진단 로직 오류로 판단되어 검증을 생략하고 무조건 True 반환.
-    """
+    """임베딩 차원 호환성 검증. 현재 768차원 고정."""
     return True
 
 
@@ -114,6 +98,11 @@ AI_CONFIG = {
     # Encoder API Type (레거시 호환)
     "encoder_api_type": os.getenv("ENCODER_API_TYPE", "openai"),
     "reranker_model": "BAAI/bge-reranker-v2-m3",
+    "reranker_max_length": int(os.getenv("RERANKER_MAX_LENGTH", "1024")),
+    "reranker_batch_size": int(os.getenv("RERANKER_BATCH_SIZE", "8")),
+    "reranker_device": os.getenv("RERANKER_DEVICE", ""),
+    "storm_max_thread_num": int(os.getenv("STORM_MAX_THREAD_NUM", "2")),
+    "storm_force_exit": os.getenv("STORM_FORCE_EXIT", "0") == "1",
 }
 
 

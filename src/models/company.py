@@ -1,9 +1,9 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Index, Integer, String, UniqueConstraint
+from sqlalchemy import Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models import Base, TimestampMixin
+from src.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from src.models import AnalysisReport, ReportJob
@@ -24,12 +24,15 @@ class Company(
         index=True,
     )
 
-    corp_code: Mapped[str | None] = mapped_column(String(8), nullable=True, unique=True, index=True)  # 고유 번호
+    corp_code: Mapped[str] = mapped_column(String(8), nullable=False, unique=True, index=True)  # 고유 번호
     stock_code: Mapped[str | None] = mapped_column(
-        String(6), nullable=True, unique=True, index=True
+        String(20), nullable=True, unique=True, index=True
     )  # 상장회사인 경우 주식의 종목 코드
-    # induty_code: Mapped[str | None] = mapped_column(String(20), nullable=True)  # 산업 코드
-    industry: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    industry_code: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )  # 산업 코드 (※주의 : dart-fss library에는 없고, 홈페이지에는 있음)
+    sector: Mapped[str | None] = mapped_column(String(100), nullable=True)  # 업종
+    product: Mapped[str | None] = mapped_column(String(255), nullable=True)  # 주요 제품
 
     # Relationships
     analysis_reports: Mapped[list["AnalysisReport"]] = relationship(
@@ -40,7 +43,9 @@ class Company(
     )
 
     __table_args__ = (
-        UniqueConstraint("company_name", name="uq_company_name"),
-        Index("idx_company_corp_code", "corp_code"),
+        # company_name, corp_code의 unique/index는 mapped_column에서 선언 완료
         Index("idx_company_created_at", "created_at"),
     )
+
+    def __repr__(self):
+        return f"<Company(name={self.company_name}, code={self.corp_code})>"

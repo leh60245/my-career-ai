@@ -9,42 +9,82 @@ import {
   Button,
   Chip,
   Divider,
+  LinearProgress,
 } from '@mui/material';
 import ReactMarkdown from 'react-markdown';
-import { getJobStatus, getReport } from '../services/apiService';
+import { getJobStatus, getReport, getReportByJobId } from '../services/apiService';
 import '../styles/ReportViewer.css';
 
-const ReportViewer = ({ jobId, reportId, onBack }) => {
-  const [status, setStatus] = useState('processing');
-  const [activeReportId, setActiveReportId] = useState(reportId || null);
+/**
+ * ReportViewer 컴포넌트
+ *
+ * Props:
+ *   jobId  - Job UUID (필수)
+ *   onBack - 대시보드 복귀 콜백
+ *
+ * 흐름:
+ *   1. GET /api/status/{jobId} 로 상태 폴링 (3초 간격)
+ *   2. COMPLETED → GET /api/report/by-job/{jobId} 로 리포트 조회
+ *   3. FAILED → 에러 메시지 표시
+ *
+ * Backend 응답 스키마:
+ *   메모리 상태: { job_id, status, progress, message, report_id }
+ *   DB 폴백:    { job_id, status, company_name, topic, error_message, ... }
+ *   리포트:     { id, job_id, company_name, topic, report_content, toc_text,
+ *                 references_data, conversation_log, meta_info, model_name, created_at }
+ */
+
+const POLL_INTERVAL = 3000;
+
+const ReportViewer = ({ jobId, initialStatus, onBack }) => {
+  // phase: 'polling' | 'loading' | 'done' | 'error'
+  // COMPLETED → 폴링 없이 바로 리포트 로드
+  const deriveInitialPhase = () => {
+    const s = (initialStatus || '').toUpperCase();
+    if (s === 'COMPLETED') return 'loading';
+    if (s === 'FAILED') return 'error';
+    return 'polling';
+  };
+  const [phase, setPhase] = useState(deriveInitialPhase);
+  const [statusInfo, setStatusInfo] = useState(null);
   const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState(
+    deriveInitialPhase() === 'error' ? '작업이 실패했습니다.' : null
+  );
   const [pollingCount, setPollingCount] = useState(0);
 
   useEffect(() => {
-    if (reportId) {
-      setActiveReportId(reportId);
-    }
-  }, [reportId]);
+    if (jobId) return;
+    setError('유효한 작업 ID가 없습니다.');
+    setPhase('error');
+  }, [jobId]);
 
-  // 상태 폴링 (3초 간격)
+  // ─── Phase 1: Status Polling ────────────────────────────
   useEffect(() => {
-    if (!jobId || activeReportId) return;
+    if (!jobId || phase !== 'polling') return;
+
+    let cancelled = false;
 
     const checkStatus = async () => {
       try {
-        const statusData = await getJobStatus(jobId);
-        console.log('Status:', statusData);
-        setStatus(statusData.status);
+        const data = await getJobStatus(jobId);
+        if (cancelled) return;
 
-        if (statusData.status === 'completed' && statusData.report_id) {
-          setActiveReportId(statusData.report_id);
-          setStatus(statusData.status);
+        setStatusInfo(data);
+        const s = (data.status || '').toUpperCase();
+
+        if (s === 'COMPLETED') {
+          setPhase('loading');
+        } else if (s === 'FAILED') {
+          setError(data.error_message || data.message || '작업이 실패했습니다.');
+          setPhase('error');
         }
+        // PENDING, PROCESSING → 계속 polling
       } catch (err) {
-        console.error('Failed to check status:', err);
-        setError('상태 확인에 실패했습니다.');
+        if (cancelled) return;
+        console.error('Status check failed:', err);
+        setError('상태 확인에 실패했습니다. 서버 연결을 확인하세요.');
+        setPhase('error');
       }
     };
 
@@ -52,89 +92,152 @@ const ReportViewer = ({ jobId, reportId, onBack }) => {
     const interval = setInterval(() => {
       checkStatus();
       setPollingCount((c) => c + 1);
-    }, 3000);
+    }, POLL_INTERVAL);
 
-    return () => clearInterval(interval);
-  }, [jobId, activeReportId]);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [jobId, phase]);
 
-  // 리포트 조회 (완료 후)
+  // ─── Phase 2: Load Report ──────────────────────────────
   useEffect(() => {
-    if (!activeReportId) return;
+    if (phase !== 'loading' || !jobId) return;
 
-    const fetchReportData = async () => {
+    let cancelled = false;
+
+    const loadReport = async () => {
       try {
-        setLoading(true);
-        const reportData = await getReport(activeReportId);
-        console.log('Report:', reportData);
+        let reportData;
+        // 메모리에 report_id(PK)가 있으면 직접 조회, 없으면 job_id로 조회
+        if (statusInfo?.report_id) {
+          reportData = await getReport(statusInfo.report_id);
+        } else {
+          reportData = await getReportByJobId(jobId);
+        }
+        if (cancelled) return;
         setReport(reportData);
-        setError(null);
+        setPhase('done');
       } catch (err) {
-        console.error('Failed to fetch report:', err);
+        if (cancelled) return;
+        console.error('Report fetch failed:', err);
         setError('리포트를 불러올 수 없습니다.');
-      } finally {
-        setLoading(false);
+        setPhase('error');
       }
     };
 
-    fetchReportData();
-  }, [activeReportId]);
+    loadReport();
+    return () => { cancelled = true; };
+  }, [phase, statusInfo, jobId]);
 
-  // 처리 중 UI
-  if (status === 'processing' && !report) {
+  // ─── Helpers ────────────────────────────────────────────
+  const currentStatus = (statusInfo?.status || '').toUpperCase();
+  const progress = statusInfo?.progress ?? 0;
+  const message = statusInfo?.message || '';
+
+  const statusLabel = {
+    PENDING: '대기 중',
+    PROCESSING: '처리 중',
+    COMPLETED: '완료',
+    FAILED: '실패',
+  };
+
+  // ─── Render: Polling (PENDING / PROCESSING) ─────────────
+  if (phase === 'polling') {
     return (
       <Container maxWidth="lg" sx={{ py: 4 }}>
         <Paper elevation={3} sx={{ p: 4, textAlign: 'center' }}>
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
             <CircularProgress size={60} />
             <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
-              📋 리포트 생성 중입니다...
+              {currentStatus === 'PENDING' ? '⏳ 작업 대기 중...' : '📋 리포트 생성 중...'}
             </Typography>
             <Typography variant="body1" color="textSecondary">
-              AI가 데이터를 분석하고 있습니다. 잠시만 기다려주세요.
+              {message || 'AI가 데이터를 분석하고 있습니다. 잠시만 기다려주세요.'}
             </Typography>
+
+            {/* Progress Bar */}
+            {progress > 0 && (
+              <Box sx={{ width: '80%', mt: 1 }}>
+                <LinearProgress
+                  variant="determinate"
+                  value={progress}
+                  sx={{ height: 10, borderRadius: 5 }}
+                />
+                <Typography variant="body2" color="textSecondary" sx={{ mt: 0.5 }}>
+                  {progress}%
+                </Typography>
+              </Box>
+            )}
+
+            <Chip
+              label={`상태: ${statusLabel[currentStatus] || currentStatus}`}
+              color={currentStatus === 'PENDING' ? 'info' : 'warning'}
+              variant="outlined"
+              size="small"
+            />
             <Typography variant="caption" color="textSecondary">
               (폴링: {pollingCount}회)
             </Typography>
+
+            <Button variant="outlined" onClick={onBack} sx={{ mt: 2 }}>
+              ← 대시보드로 돌아가기
+            </Button>
           </Box>
         </Paper>
       </Container>
     );
   }
 
-  // 에러 UI
-  if (error) {
+  // ─── Render: Error ──────────────────────────────────────
+  if (phase === 'error') {
     return (
       <Container maxWidth="lg" sx={{ py: 4 }}>
         <Paper elevation={3} sx={{ p: 4 }}>
-          <Alert severity="error" sx={{ mb: 2 }}>
+          <Alert severity="error" sx={{ mb: 3 }}>
             {error}
           </Alert>
+          {statusInfo?.error_message && statusInfo.error_message !== error && (
+            <Typography
+              variant="body2"
+              component="pre"
+              sx={{
+                backgroundColor: '#f5f5f5',
+                p: 2,
+                borderRadius: 1,
+                overflow: 'auto',
+                mb: 2,
+                fontSize: '0.85rem',
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {statusInfo.error_message}
+            </Typography>
+          )}
           <Button variant="contained" onClick={onBack}>
-            돌아가기
+            ← 대시보드로 돌아가기
           </Button>
         </Paper>
       </Container>
     );
   }
 
-  // 로딩 중 UI
-  if (loading && !report) {
+  // ─── Render: Loading Report ─────────────────────────────
+  if (phase === 'loading') {
     return (
       <Container maxWidth="lg" sx={{ py: 4 }}>
         <Paper elevation={3} sx={{ p: 4, textAlign: 'center' }}>
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
             <CircularProgress size={50} />
-            <Typography variant="body1">
-              리포트를 불러오는 중...
-            </Typography>
+            <Typography variant="body1">리포트를 불러오는 중...</Typography>
           </Box>
         </Paper>
       </Container>
     );
   }
 
-  // 리포트 표시 UI
-  if (report) {
+  // ─── Render: Report ─────────────────────────────────────
+  if (phase === 'done' && report) {
     return (
       <Container maxWidth="lg" sx={{ py: 4 }}>
         {/* 헤더 */}
@@ -147,8 +250,7 @@ const ReportViewer = ({ jobId, reportId, onBack }) => {
               <Typography variant="body1" color="textSecondary">
                 주제: {report.topic}
               </Typography>
-              <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
-                <Chip label={`상태: ${report.status}`} color="success" variant="outlined" />
+              <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
                 <Chip label={`모델: ${report.model_name}`} variant="outlined" />
                 {report.created_at && (
                   <Chip
@@ -235,7 +337,7 @@ const ReportViewer = ({ jobId, reportId, onBack }) => {
                       padding: '12px',
                       borderRadius: '4px',
                       overflowX: 'auto',
-                      mb: '1.5rem',
+                      marginBottom: '1.5rem',
                     }}>
                       <code {...props} />
                     </pre>
@@ -263,6 +365,8 @@ const ReportViewer = ({ jobId, reportId, onBack }) => {
                       textDecoration: 'none',
                       '&:hover': { textDecoration: 'underline' },
                     }}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     {...props}
                   />
                 ),
@@ -272,7 +376,7 @@ const ReportViewer = ({ jobId, reportId, onBack }) => {
             </ReactMarkdown>
           </div>
 
-          {/* 목차 (있으면 표시) */}
+          {/* 목차 */}
           {report.toc_text && (
             <>
               <Divider sx={{ my: 3 }} />
@@ -284,59 +388,59 @@ const ReportViewer = ({ jobId, reportId, onBack }) => {
                 p: 2,
                 borderRadius: '4px',
                 overflow: 'auto',
+                whiteSpace: 'pre-wrap',
               }}>
                 {report.toc_text}
               </Typography>
             </>
           )}
 
-          {/* 메타정보 (있으면 표시) */}
-          {/* {report.meta_info && (
-            <>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2 }}>
-                ℹ️ 생성 정보
-              </Typography>
-              <Typography component="pre" variant="body2" sx={{
-                backgroundColor: '#f5f5f5',
-                p: 2,
-                borderRadius: '4px',
-                overflow: 'auto',
-                fontSize: '0.85rem',
-              }}>
-                {JSON.stringify(report.meta_info, null, 2)}
-              </Typography>
-            </>
-          )} */}
-
-          {/* 참고 문헌 (url_to_info 형식) */}
-          {report.references && typeof report.references === 'object' && report.references.url_to_info && (
-            <>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2 }}>
-                📚 참고 문헌
-              </Typography>
-              <Box component="ul" sx={{ pl: 2, m: 0 }}>
-                {Object.entries(report.references.url_to_info).map(([url, info], idx) => (
-                  <Box key={`${url}-${idx}`} component="li" sx={{ mb: 1.5 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
-                      {info.title || url}
-                    </Typography>
-                    {info.snippet && (
-                      <Typography variant="body2" sx={{ mt: 0.5, color: 'text.secondary' }}>
-                        {info.snippet}
-                      </Typography>
-                    )}
-                    {url && (
-                      <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mt: 0.5 }}>
-                        URL: {url}
-                      </Typography>
-                    )}
-                  </Box>
-                ))}
-              </Box>
-            </>
-          )}
+          {/* 참고 문헌 (references_data.url_to_info 형식) */}
+          {report.references_data &&
+            typeof report.references_data === 'object' &&
+            report.references_data.url_to_info && (
+              <>
+                <Divider sx={{ my: 3 }} />
+                <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2 }}>
+                  📚 참고 문헌
+                </Typography>
+                <Box component="ul" sx={{ pl: 2, m: 0 }}>
+                  {Object.entries(report.references_data.url_to_info).map(
+                    ([url, info], idx) => (
+                      <Box key={`${url}-${idx}`} component="li" sx={{ mb: 1.5 }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
+                          {info.title || url}
+                        </Typography>
+                        {info.snippet && (
+                          <Typography
+                            variant="body2"
+                            sx={{ mt: 0.5, color: 'text.secondary' }}
+                          >
+                            {info.snippet}
+                          </Typography>
+                        )}
+                        {url && (
+                          <Typography
+                            variant="caption"
+                            color="textSecondary"
+                            sx={{ display: 'block', mt: 0.5 }}
+                          >
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: '#1976d2' }}
+                            >
+                              {url}
+                            </a>
+                          </Typography>
+                        )}
+                      </Box>
+                    )
+                  )}
+                </Box>
+              </>
+            )}
         </Paper>
 
         {/* 하단 액션 */}
@@ -344,9 +448,7 @@ const ReportViewer = ({ jobId, reportId, onBack }) => {
           <Button variant="contained" onClick={onBack}>
             ← 새로운 리포트 생성
           </Button>
-          <Button variant="outlined">
-            📥 다운로드
-          </Button>
+          <Button variant="outlined">📥 다운로드</Button>
         </Box>
       </Container>
     );

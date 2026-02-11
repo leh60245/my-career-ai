@@ -1,162 +1,117 @@
 import logging
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.models import Company
-from src.repositories import CompanyRepository, DuplicateEntity
+from src.repositories import CompanyRepository
 
 logger = logging.getLogger(__name__)
 
 
 class CompanyService:
     """
-    Service for company management and operations.
-
+    기업 정보 관리 도메인 서비스 (The Admin)
+    역할: 기업 정보의 등록(Onboarding), 갱신, 조회를 담당합니다.
     """
 
-    def __init__(self, company_repo: CompanyRepository) -> None:
-        """
-        Initialize company service.
+    def __init__(self, company_repo: CompanyRepository):
+        self.repo = company_repo
 
-        Args:
-            company_repo: CompanyRepository for data access
-
-        Raises:
-            ValueError: If repository is None
-        """
-        if company_repo is None:
-            raise ValueError("CompanyRepository cannot be None")
-
-        self.company_repo = company_repo
-        logger.debug("CompanyService initialized")
-
-    async def get_company(self, company_id: int) -> Company | None:
-        """
-        Get company by ID.
-
-        Args:
-            company_id: Primary key
-
-        Returns:
-            Company instance or None
-
-        Raises:
-            ValueError: If ID is invalid
-        """
-        if company_id <= 0:
-            raise ValueError("Company ID must be positive")
-
-        return await self.company_repo.get(company_id)
-
-    async def list_companies(self, limit: int | None = None, offset: int = 0) -> list[dict]:
-        companies = await self.company_repo.get_all(limit=limit, skip=offset)
-        return [{"id": c.id, "company_name": c.company_name} for c in companies]
-
-    async def search_companies(self, query: str) -> list[Company]:
-        """
-        Search companies by name or code.
-
-        Args:
-            query: Search term (name or corp_code)
-
-        Returns:
-            List of matching companies
-
-        Raises:
-            ValueError: If query is empty
-        """
-        if not query or not query.strip():
-            raise ValueError("Search query cannot be empty")
-
-        return await self.company_repo.search_companies(query=query.strip(), limit=10)
-
-    async def get_companies_by_industry(self, industry: str) -> list[Company]:
-        """
-        Get companies by industry classification.
-
-        Args:
-            industry: Industry name
-
-        Returns:
-            List of companies in industry
-
-        Raises:
-            ValueError: If industry is empty
-        """
-        if not industry or not industry.strip():
-            raise ValueError("Industry cannot be empty")
-
-        return await self.company_repo.get_by_industry(industry=industry.strip())
+    @classmethod
+    def from_session(cls, session: AsyncSession) -> "CompanyService":
+        """AsyncSession으로부터 서비스 인스턴스 생성 (Controller용)"""
+        return cls(CompanyRepository(session))
 
     async def onboard_company(
         self,
+        corp_code: str,
         company_name: str,
-        corp_code: str | None = None,
         stock_code: str | None = None,
-        industry: str | None = None,
+        sector: str | None = None,
+        product: str | None = None,
     ) -> Company:
         """
-        Onboard a new company (future enhancement).
-
-        Business logic:
-            1. Validate company doesn't already exist
-            2. Create company record
-            3. Trigger DART data fetch (future)
-            4. Generate company embeddings (future)
+        기업 등록 및 정보 동기화 (Idempotent Method)
 
         Args:
-            company_name: Official company name
-            corp_code: DART corporation code
-            stock_code: Korea Exchange code
-            industry: Industry classification
+            corp_code: DART 고유번호 (Immutable Key)
+            company_name: 회사명 (변경 가능)
+            stock_code: 종목코드 (상장 시 생성/변경 가능)
+            sector: 업종 (변경 가능)
+            product: 제품/서비스 (변경 가능)
 
         Returns:
-            Created Company instance
-
-        Raises:
-            DuplicateEntity: If company already exists
-            ValueError: If validation fails
+            Company: 생성되거나 갱신된 기업 객체
         """
-        if not company_name or not company_name.strip():
-            raise ValueError("Company name cannot be empty")
+        if not corp_code:
+            raise ValueError("corp_code is mandatory for onboarding.")
 
-        company_name = company_name.strip()
+        # 1. [Read] 고유번호로 기존 등록 여부 확인
+        existing = await self.repo.get_by_corp_code(corp_code)
 
-        # Check if company already exists
-        existing = await self.company_repo.get_by_name(company_name)
+        # 2. [Update] 이미 존재한다면 정보 최신화 검사
         if existing:
-            raise DuplicateEntity(f"Company '{company_name}' is already onboarded")
+            update_data = {}
 
-        # Create company record
-        company = await self.company_repo.create(
-            {
-                "company_name": company_name,
-                "corp_code": corp_code,
-                "stock_code": stock_code,
-                "industry": industry,
-            }
-        )
+            # 회사명이 변경되었는지 확인
+            if existing.company_name != company_name:
+                update_data["company_name"] = company_name
 
-        logger.info(f"✅ Onboarded company: {company_name} (id={company.id})")
+            # 종목코드가 변경되었거나 새로 생겼는지 확인
+            # (None과 빈 문자열, 혹은 다른 코드로의 변경 감지)
+            if existing.stock_code != stock_code:
+                update_data["stock_code"] = stock_code
 
-        # Future: Trigger DART API fetch
-        # await self._fetch_dart_reports(company.id)
+                # [Note] 모델에 is_listed 컬럼이 있다면 여기서 같이 갱신
+                # update_data["is_listed"] = bool(stock_code)
 
-        # Future: Generate embeddings
-        # await self._generate_company_embeddings(company.id)
+            # 업종이 변경되었는지 확인
+            if existing.sector != sector:
+                update_data["sector"] = sector
 
-        return company
+            # 제품/서비스가 변경되었는지 확인
+            if existing.product != product:
+                update_data["product"] = product
 
-    async def get_company_statistics(self) -> dict:
-        """
-        Get company statistics (for dashboard).
+            # 변경사항이 있을 때만 DB Update 호출 (DB 부하 절감)
+            if update_data:
+                logger.info(f"🔄 Updating company info for {corp_code}: {update_data}")
+                existing = await self.repo.update(existing.id, update_data)
 
-        Returns:
-            Dictionary with statistics
-        """
-        total = await self.company_repo.count()
+            return existing
 
-        return {
-            "total_companies": total,
+        # 3. [Create] 신규 등록
+        logger.info(f"✨ Onboarding new company: {company_name} ({corp_code})")
+
+        new_data = {
+            "corp_code": corp_code,
+            "company_name": company_name,
+            "stock_code": stock_code,
+            "sector": sector,
+            "product": product,
+            "industry_code": None,  # 추후 확장 가능
         }
 
+        return await self.repo.create(new_data)
 
-__all__ = ["CompanyService"]
+    async def get_company(self, company_id: int) -> Company | None:
+        """
+        ID로 기업 정보 단건 조회
+        """
+        return await self.repo.get(company_id)
+
+    async def get_by_name(self, company_name: str) -> Company | None:
+        """회사명으로 단건 조회"""
+        return await self.repo.get_by_company_name(company_name)
+
+    async def get_all_companies(
+        self,
+        limit: int = 100,
+        skip: int = 0,
+        order_by: str = "company_name",
+    ) -> list[Company]:
+        """전체 기업 목록 조회 (기본 회사명 오름차순)"""
+        companies = await self.repo.get_all(
+            skip=skip, limit=limit, order_by=order_by, ascending=True
+        )
+        return list(companies)

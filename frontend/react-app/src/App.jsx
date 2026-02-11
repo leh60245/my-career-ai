@@ -46,40 +46,44 @@ const theme = createTheme({
  * Enterprise STORM Frontend Application
  *
  * Architecture:
- * - Dashboard: 기업 선택 및 리포트 생성 요청
- * - ReportViewer: 생성된 리포트 표시 (Markdown 렌더링)
- * - Global State: jobId를 통한 상태 관리
+ *   Dashboard  → 기업 선택 및 리포트 생성/목록 관리
+ *   ReportViewer → 리포트 진행 상태 확인 + 완료된 리포트 표시
  *
  * Flow:
- * 1. Dashboard에서 기업 선택 → 생성 요청 (POST /api/generate)
- * 2. jobId 획득 → ReportViewer로 전환
- * 3. ReportViewer에서 3초 간격 폴링 (GET /api/status/{jobId})
- * 4. status=completed → reportId 추출
- * 5. reportId로 리포트 조회 (GET /api/report/{reportId})
- * 6. react-markdown으로 렌더링
+ *   1. Dashboard에서 기업 선택 → 생성 요청 (POST /api/generate)
+ *   2. jobId 획득 → ReportViewer로 전환
+ *   3. ReportViewer에서 3초 간격 폴링 (GET /api/status/{jobId})
+ *   4. COMPLETED → GET /api/report/by-job/{jobId} 로 리포트 조회
+ *   5. react-markdown으로 렌더링
+ *
+ * State:
+ *   view   - 'dashboard' | 'viewer'
+ *   jobId  - 활성 Job의 UUID (null이면 대시보드)
  */
 
 function App() {
-  const [view, setView] = useState('dashboard'); // 'dashboard' | 'viewer'
+  const [view, setView] = useState('dashboard');
   const [jobId, setJobId] = useState(null);
-  const [reportId, setReportId] = useState(null);
+  const [initialStatus, setInitialStatus] = useState(null);
 
+  /** 생성 직후 → Viewer로 전환 (폴링 필요) */
   const handleReportStart = (newJobId) => {
     setJobId(newJobId);
-    setReportId(null);
+    setInitialStatus('PENDING');
     setView('viewer');
   };
 
-  const handleViewReport = (id) => {
-    setReportId(id);
-    setJobId(null);
+  /** 테이블 "보기" 버튼 → Viewer로 전환 (상태에 따라 분기) */
+  const handleViewReport = (targetJobId, status) => {
+    setJobId(targetJobId);
+    setInitialStatus((status || '').toUpperCase());
     setView('viewer');
   };
 
+  /** Viewer에서 뒤로가기 → Dashboard 복귀 */
   const handleBackToDashboard = () => {
     setView('dashboard');
     setJobId(null);
-    setReportId(null);
   };
 
   return (
@@ -95,13 +99,12 @@ function App() {
         {view === 'dashboard' ? (
           <Dashboard
             onReportStart={handleReportStart}
-            onJobIdChange={setJobId}
             onViewReport={handleViewReport}
           />
         ) : (
           <ReportViewer
             jobId={jobId}
-            reportId={reportId}
+            initialStatus={initialStatus}
             onBack={handleBackToDashboard}
           />
         )}

@@ -20,6 +20,8 @@ nest_asyncio
 # =========== DB 파트 ================# DART API
 pgvector
 
+tabulate
+
 dart-fss==0.4.15
 
 # Database

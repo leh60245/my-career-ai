@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Sequence
 
-from src.common import EmbeddingService
+from src.common import Embedding
 from src.models import SourceMaterial
 from src.repositories import SourceMaterialRepository
 from src.schemas import SearchResult
@@ -18,11 +18,11 @@ class SourceMaterialService:
     def __init__(
         self,
         source_material_repo: SourceMaterialRepository,
-        embedding_service: EmbeddingService,
+        embedding: Embedding,
         reranker_service: RerankerService,
     ) -> None:
         self.repo = source_material_repo
-        self.embedding = embedding_service
+        self.embedding = embedding
         self.reranker = reranker_service
 
     async def search(
@@ -34,13 +34,14 @@ class SourceMaterialService:
     ) -> Sequence[SearchResult]:
 
         # 1. 임베딩
-        query_vector = self.embedding.embed_text(query)
+
+        query_vector = await self.embedding.get_embeddings([query])
 
         fetch_k = top_k * 3 if enable_rerank else top_k
 
         # 2. DB 검색 (순수하게 ID 필터링만 수행)
         raw_rows = await self.repo.search_by_vector(
-            query_embedding=query_vector,
+            query_embedding=query_vector[0],
             company_id_list=company_ids,  # 외부에서 결정된 ID 리스트 사용
             top_k=fetch_k,
             chunk_type_filter="text",  # 우선 텍스트 위주로 검색
@@ -55,7 +56,7 @@ class SourceMaterialService:
         # 4. Reranking (Cross-Encoder)
         if enable_rerank and processed_results:
             logger.info(f"🤖 Reranking {len(processed_results)} documents...")
-            processed_results = self.reranker.rerank(query=query, docs=processed_results, top_k=top_k)
+            processed_results = await self.reranker.rerank(query=query, docs=processed_results, top_k=top_k)
 
         return processed_results  # type: ignore
 
@@ -64,7 +65,7 @@ class SourceMaterialService:
         DB의 Raw 결과(Row)를 표준 SearchResult 스키마로 변환하고,
         필요 시 다음 청크(Table)를 찾아 내용을 보강합니다.
         """
-        results: Sequence[SearchResult] = []
+        results: list[SearchResult] = []
 
         for row in raw_rows:
             # SourceMaterialRepository.search_by_vector의 반환값 구조에 맞춤

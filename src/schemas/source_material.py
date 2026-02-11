@@ -18,13 +18,13 @@ class SourceMaterialBase(BaseModel):
 class SourceMaterialCreate(SourceMaterialBase):
     """Schema for creating a new SourceMaterial (POST request)"""
 
-    report_id: int = Field(..., description="Foreign key to Analysis_Reports")
+    analysis_report_id: int = Field(..., description="Foreign key to Analysis_Reports")
     embedding: list[float] | None = Field(None, description="Vector embedding")
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "report_id": 1,
+                "analysis_report_id": 1,
                 "chunk_type": "text",
                 "section_path": "1.1.2",
                 "sequence_order": 10,
@@ -58,17 +58,16 @@ class SourceMaterialResponse(SourceMaterialBase):
     """Schema for SourceMaterial response (GET response)"""
 
     id: int
-    report_id: int
+    analysis_report_id: int
     embedding: list[float] | None = None
     created_at: datetime
-    updated_at: datetime
 
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={
             "example": {
                 "id": 1,
-                "report_id": 1,
+                "analysis_report_id": 1,
                 "chunk_type": "text",
                 "section_path": "1.1.2",
                 "sequence_order": 10,
@@ -77,7 +76,6 @@ class SourceMaterialResponse(SourceMaterialBase):
                 "table_metadata": None,
                 "meta_info": {"language": "ko", "confidence": 0.95},
                 "created_at": "2024-01-15T10:30:00",
-                "updated_at": "2024-01-15T12:00:00",
             }
         },
     )
@@ -87,7 +85,7 @@ class SourceMaterialListItem(BaseModel):
     """Schema for SourceMaterial list item (compact view, no embedding)"""
 
     id: int
-    report_id: int
+    analysis_report_id: int
     chunk_type: str
     section_path: str
     sequence_order: int
@@ -120,9 +118,9 @@ class VectorSearchResult(BaseModel):
     """Schema for vector search result item"""
 
     id: int
-    report_id: int
+    analysis_report_id: int
     section_path: str
     raw_content: str
-    distance: float = Field(..., description="L2 distance (lower is better)")
+    distance: float = Field(..., description="Cosine distance (lower is more similar)")
 
     model_config = ConfigDict(from_attributes=True)

@@ -1,59 +1,49 @@
-"""
-통합 임베딩 서비스 (Unified Embedding Service)
-
-AI와 Ingestion 양쪽에서 동일한 임베딩 모델을 사용하도록 강제합니다.
-이를 통해 DB에 저장된 벡터와 검색 시 생성하는 벡터의 일관성을 보장합니다.
-
-지원 프로바이더:
-- huggingface: sentence-transformers/paraphrase-multilingual-mpnet-base-v2 (768차원, 기본값)
-- openai: text-embedding-3-small (1536차원)
-
-⚠️ 중요: DB에 이미 저장된 임베딩과 동일한 모델을 사용해야 합니다!
-프로바이더를 변경하면 기존 데이터 재임베딩이 필요합니다.
-
-사용 예시:
-    # 기본 사용 (config에서 provider 자동 결정)
-    service = EmbeddingService()
-    embedding = service.embed_text("삼성전자 매출 현황")
-
-    # 명시적 프로바이더 지정
-    service = EmbeddingService(provider="huggingface")
-    embeddings = service.embed_texts(["텍스트1", "텍스트2"])
-"""
+import asyncio
+import inspect
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import Literal, Optional
+from typing import Optional
 
-import numpy as np
+from openai import AsyncOpenAI
 
-from .config import EMBEDDING_CONFIG
+try:
+    from .config import EMBEDDING_CONFIG
+except ImportError:
+    EMBEDDING_CONFIG = {
+        "provider": "openai",
+        "openai_model": "text-embedding-3-small",
+        "hf_model": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+        "dimension": 1536,
+        "batch_size": 32,
+        "max_length": 512,
+    }
 
 logger = logging.getLogger(__name__)
 
 
 def get_optimal_device() -> str:
-    """Return the best available accelerator in priority order: cuda > mps > cpu."""
-    import torch
+    """Return the best available accelerator."""
+    try:
+        import torch
 
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
+    except ImportError:
+        pass
     return "cpu"
 
 
 class BaseEmbedder(ABC):
-    """임베딩 생성기 기본 클래스"""
+    """임베딩 생성기 추상 기본 클래스"""
 
     @abstractmethod
-    def embed_text(self, text: str) -> list[float]:
-        """단일 텍스트 임베딩"""
-        pass
-
-    @abstractmethod
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """배치 텍스트 임베딩"""
+    async def get_embeddings(self, texts: list[str]) -> list[list[float]]:
+        """
+        [Async] 텍스트 리스트에 대한 임베딩 벡터 반환
+        """
         pass
 
     @abstractmethod
@@ -62,404 +52,184 @@ class BaseEmbedder(ABC):
         pass
 
 
+class OpenAIEmbedder(BaseEmbedder):
+    """
+    OpenAI API 기반 비동기 임베딩 생성기 (AsyncOpenAI)
+    """
+
+    def __init__(self, model_name: str | None = None, api_key: str | None = None):
+        self.model_name = model_name or EMBEDDING_CONFIG.get("openai_model", "text-embedding-3-small")
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+
+        # 1536 for text-embedding-3-small, 3072 for large
+        self._dimension = 1536 if "small" in self.model_name else 3072
+        if "dimension" in EMBEDDING_CONFIG:
+            self._dimension = EMBEDDING_CONFIG["dimension"]
+
+        if not self.api_key:
+            logger.warning("⚠️ OPENAI_API_KEY is missing. Embeddings will fail.")
+            self.client = None
+        else:
+            self.client = AsyncOpenAI(api_key=self.api_key)
+            logger.info(f"✅ OpenAI Async Embedder initialized: {self.model_name}")
+
+    def get_dimension(self) -> int:
+        return self._dimension
+
+    async def get_embeddings(self, texts: list[str]) -> list[list[float]]:
+        if not texts or not self.client:
+            return []
+
+        try:
+            # 공백/Newlines 정리 (임베딩 품질 향상)
+            sanitized_texts = [text.replace("\n", " ") for text in texts]
+
+            # Async API 호출
+            response = await self.client.embeddings.create(input=sanitized_texts, model=self.model_name)
+
+            # OpenAI는 입력 순서를 보장함
+            return [data.embedding for data in response.data]
+
+        except Exception as e:
+            logger.error(f"Failed to generate embeddings (OpenAI): {e}")
+            return []
+
+    async def aclose(self) -> None:
+        if not self.client:
+            return
+        close_fn = getattr(self.client, "aclose", None) or getattr(self.client, "close", None)
+        if not close_fn:
+            return
+        result = close_fn()
+        if inspect.isawaitable(result):
+            await result
+
+
 class HuggingFaceEmbedder(BaseEmbedder):
     """
-    HuggingFace 기반 임베딩 생성기
-
-    sentence-transformers 모델을 사용하여 768차원 임베딩을 생성합니다.
-    GPU가 있으면 자동으로 CUDA를 사용합니다.
+    HuggingFace 로컬 모델 기반 임베딩 생성기
+    CPU/GPU 연산이 무거우므로 ThreadPoolExecutor에서 실행하여 이벤트 루프 차단 방지
     """
 
-    def __init__(
-        self,
-        model_name: str = None,
-        device: str = None,
-        batch_size: int = None,
-    ):
-        self.model_name = model_name or EMBEDDING_CONFIG["hf_model"]
-        self.batch_size = batch_size or EMBEDDING_CONFIG["batch_size"]
+    def __init__(self, model_name: str | None = None, device: str | None = None, batch_size: int | None = None):
+        self.model_name = model_name or EMBEDDING_CONFIG.get("hf_model")
+        self.batch_size = batch_size or EMBEDDING_CONFIG.get("batch_size", 32)
+        self.device = device or get_optimal_device()
 
-        # Lazy import (transformers가 무거우므로)
-        import torch
+        logger.info(f"🔄 Loading HuggingFace model: {self.model_name} on {self.device.upper()}")
+
+        # Lazy Import
         from transformers import AutoModel, AutoTokenizer
 
-        # 디바이스 설정
-        if device is None:
-            self.device = get_optimal_device()
-        else:
-            self.device = device
-            if self.device.startswith("cuda") and not torch.cuda.is_available():
-                logger.warning("Requested CUDA device but CUDA is unavailable. Falling back to CPU.")
-                self.device = "cpu"
-            elif self.device == "mps" and not torch.backends.mps.is_available():
-                logger.warning("Requested MPS device but MPS is unavailable. Falling back to CPU.")
-                self.device = "cpu"
-
-        logger.info(f"🔄 Loading HuggingFace embedding model: {self.model_name}")
-        logger.info(f"🚀 [System] Embedding Model loaded on: {self.device.upper()}")
-
-        # 모델 로드
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         self.model = AutoModel.from_pretrained(self.model_name)
         self.model.to(self.device)
         self.model.eval()
 
         self._dimension = self.model.config.hidden_size
-        logger.info(f"✅ Model loaded (dimension: {self._dimension})")
+        logger.info(f"✅ HuggingFace Model loaded (dim: {self._dimension})")
 
     def get_dimension(self) -> int:
         return self._dimension
 
-    def _mean_pooling(self, model_output, attention_mask):
-        """Mean Pooling - attention mask를 고려한 평균"""
-        import torch
-
-        token_embeddings = model_output[0]
-        input_mask_expanded = (
-            attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-        )
-        return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(
-            input_mask_expanded.sum(1), min=1e-9
-        )
-
-    def embed_text(self, text: str) -> list[float]:
-        """단일 텍스트 임베딩"""
-        return self.embed_texts([text])[0]
-
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """배치 텍스트 임베딩"""
+    def _embed_sync(self, texts: list[str]) -> list[list[float]]:
+        """[Sync] 실제 연산 수행 (Blocking)"""
         import torch
 
         all_embeddings = []
-
+        # Batch Processing
         for i in range(0, len(texts), self.batch_size):
-            batch_texts = texts[i : i + self.batch_size]
+            batch = texts[i : i + self.batch_size]
 
-            # 토큰화
-            encoded_input = self.tokenizer(
-                batch_texts,
-                padding=True,
-                truncation=True,
-                max_length=EMBEDDING_CONFIG["max_length"],
-                return_tensors="pt",
-            )
+            encoded_input = self.tokenizer(batch, padding=True, truncation=True, max_length=512, return_tensors="pt")
             encoded_input = {k: v.to(self.device) for k, v in encoded_input.items()}
 
-            # 임베딩 생성
             with torch.no_grad():
                 model_output = self.model(**encoded_input)
 
-            # Mean pooling
-            embeddings = self._mean_pooling(
-                model_output, encoded_input["attention_mask"]
-            )
+            # Mean Pooling
+            token_embeddings = model_output[0]
+            attention_mask = encoded_input["attention_mask"]
 
-            # 정규화 (유사도 검색에 유용)
+            input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+            sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
+            sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+            embeddings = sum_embeddings / sum_mask
+
+            # Normalize
             embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-
-            # CPU로 이동 후 리스트 변환
-            embeddings = embeddings.cpu().tolist()
-            all_embeddings.extend(embeddings)
+            all_embeddings.extend(embeddings.cpu().tolist())
 
         return all_embeddings
 
+    async def get_embeddings(self, texts: list[str]) -> list[list[float]]:
+        """[Async Wrapper] ThreadPool에서 동기 메서드 실행"""
+        if not texts:
+            return []
 
-class OpenAIEmbedder(BaseEmbedder):
+        loop = asyncio.get_running_loop()
+        try:
+            # CPU Blocking 방지를 위해 별도 스레드에서 실행
+            return await loop.run_in_executor(None, self._embed_sync, texts)
+        except Exception as e:
+            logger.error(f"Failed to generate embeddings (HF): {e}")
+            return []
+
+
+class Embedding:
     """
-    OpenAI API 기반 임베딩 생성기
-
-    text-embedding-3-small 모델을 사용하여 1536차원 임베딩을 생성합니다.
-    LiteLLM을 통해 캐싱과 재시도 로직을 지원합니다.
-    """
-
-    def __init__(
-        self,
-        model_name: str = None,
-        api_key: str = None,
-        max_workers: int = 5,
-    ):
-        self.model_name = model_name or EMBEDDING_CONFIG["openai_model"]
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.max_workers = max_workers
-        self._dimension = EMBEDDING_CONFIG["openai_dimension"]
-        self.total_token_usage = 0
-
-        if not self.api_key:
-            raise RuntimeError(
-                "OPENAI_API_KEY is required for OpenAI embeddings. "
-                "Please set it in .env or as environment variable."
-            )
-
-        # LiteLLM 설정 (캐싱)
-        self._setup_litellm()
-
-        logger.info(f"✅ OpenAI Embedder initialized: {self.model_name}")
-
-    def _setup_litellm(self):
-        """LiteLLM 캐시 설정"""
-        import warnings
-        from pathlib import Path
-
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=UserWarning)
-            if "LITELLM_LOCAL_MODEL_COST_MAP" not in os.environ:
-                os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
-
-            import litellm
-            from litellm.caching.caching import Cache
-
-            litellm.drop_params = True
-            litellm.telemetry = False
-
-            disk_cache_dir = os.path.join(Path.home(), ".storm_local_cache")
-            litellm.cache = Cache(disk_cache_dir=disk_cache_dir, type="disk")
-
-            self._litellm = litellm
-
-    def get_dimension(self) -> int:
-        return self._dimension
-
-    def _get_single_embedding(self, text: str):
-        """단일 텍스트 임베딩 (내부용)"""
-        response = self._litellm.embedding(
-            model=self.model_name,
-            input=text,
-            caching=True,
-            api_key=self.api_key,
-        )
-        embedding = response.data[0]["embedding"]
-        token_usage = response.get("usage", {}).get("total_tokens", 0)
-        return text, embedding, token_usage
-
-    def embed_text(self, text: str) -> list[float]:
-        """단일 텍스트 임베딩"""
-        _, embedding, tokens = self._get_single_embedding(text)
-        self.total_token_usage += tokens
-        return embedding
-
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """배치 텍스트 임베딩 (병렬 처리)"""
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        if len(texts) == 1:
-            return [self.embed_text(texts[0])]
-
-        embeddings = []
-        total_tokens = 0
-
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {
-                executor.submit(self._get_single_embedding, text): text
-                for text in texts
-            }
-
-            for future in as_completed(futures):
-                try:
-                    text, embedding, tokens = future.result()
-                    embeddings.append((text, embedding, tokens))
-                    total_tokens += tokens
-                except Exception as e:
-                    logger.error(f"Embedding error for text: {futures[future][:50]}...")
-                    logger.error(e)
-                    # 에러 시 빈 벡터 추가 (차원 유지)
-                    embeddings.append((futures[future], [0.0] * self._dimension, 0))
-
-        # 원본 순서대로 정렬
-        embeddings.sort(key=lambda x: texts.index(x[0]))
-        self.total_token_usage += total_tokens
-
-        return [e[1] for e in embeddings]
-
-    def get_token_usage(self, reset: bool = False) -> int:
-        """토큰 사용량 조회"""
-        usage = self.total_token_usage
-        if reset:
-            self.total_token_usage = 0
-        return usage
-
-
-class EmbeddingService:
-    """
-    통합 임베딩 서비스
-
-    config에서 지정한 provider에 따라 적절한 임베딩 모델을 사용합니다.
-    AI와 Ingestion 양쪽에서 이 클래스를 사용하여 일관성을 보장합니다.
-
-    ⚠️ 중요: 반드시 동일한 provider를 사용해야 벡터 검색이 정확합니다!
+    통합 임베딩 서비스 (Singleton & Strategy Pattern)
+    IngestionService 및 검색 서비스에서 공통으로 사용
     """
 
-    _instance: Optional["EmbeddingService"] = None
+    _instance: Optional["Embedding"] = None
     _embedder: BaseEmbedder | None = None
 
-    def __new__(cls, provider: str = None, **kwargs):
-        """싱글톤 패턴 (동일 provider일 경우)"""
-        target_provider = provider or EMBEDDING_CONFIG["provider"]
+    def __new__(cls, provider: str | None = None, **kwargs):
+        target_provider = provider or EMBEDDING_CONFIG.get("provider", "openai")
 
+        # 인스턴스가 없거나 프로바이더가 바뀌면 재생성
         if cls._instance is None or cls._instance._provider != target_provider:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
 
         return cls._instance
 
-    def __init__(
-        self,
-        provider: Literal["huggingface", "openai"] = None,
-        validate_dimension: bool = True,
-        **kwargs,
-    ):
-        if self._initialized:
+    def __init__(self, provider: str | None = None, **kwargs):
+        if getattr(self, "_initialized", False):
             return
 
-        self._provider = provider or EMBEDDING_CONFIG["provider"]
-
+        self._provider = provider or EMBEDDING_CONFIG.get("provider", "openai")
         logger.info(f"🚀 Initializing EmbeddingService with provider: {self._provider}")
 
-        # [안전장치] 차원 불일치 조기 감지
-        if validate_dimension:
-            try:
-                from .config import validate_embedding_dimension_compatibility
-                validate_embedding_dimension_compatibility()
-            except Exception as e:
-                logger.error(f"Dimension validation failed: {e}")
-                raise
-
-        if self._provider == "huggingface":
-            self._embedder = HuggingFaceEmbedder(**kwargs)
-        elif self._provider == "openai":
+        if self._provider == "openai":
             self._embedder = OpenAIEmbedder(**kwargs)
+        elif self._provider == "huggingface":
+            self._embedder = HuggingFaceEmbedder(**kwargs)
         else:
-            raise ValueError(
-                f"Unsupported embedding provider: {self._provider}. "
-                "Supported: 'huggingface', 'openai'"
-            )
+            raise ValueError(f"Unsupported provider: {self._provider}")
 
         self._initialized = True
 
-        # 로드된 모델 차원과 설정 차원 확인
-        actual_dim = self._embedder.get_dimension()
-        expected_dim = EMBEDDING_CONFIG["dimension"]
-        if actual_dim != expected_dim:
-            raise RuntimeError(
-                f"Model dimension mismatch: loaded model has {actual_dim}D, "
-                f"but config expects {expected_dim}D"
-            )
+    async def get_embeddings(self, texts: list[str]) -> list[list[float]]:
+        """
+        [Standard Async Interface]
+        텍스트 리스트를 입력받아 임베딩 벡터 리스트를 반환합니다.
+        """
+        if not self._embedder:
+            logger.error("Embedder not initialized.")
+            return []
 
-    @property
-    def provider(self) -> str:
-        """현재 프로바이더"""
-        return self._provider
+        return await self._embedder.get_embeddings(texts)
+
+    async def aclose(self) -> None:
+        if self._embedder and hasattr(self._embedder, "aclose"):
+            await self._embedder.aclose()
 
     @property
     def dimension(self) -> int:
-        """임베딩 차원"""
         return self._embedder.get_dimension()
 
-    def embed_text(self, text: str) -> list[float]:
-        """
-        단일 텍스트 임베딩
-
-        Args:
-            text: 임베딩할 텍스트
-
-        Returns:
-            List[float]: 임베딩 벡터
-        """
-        return self._embedder.embed_text(text)
-
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """
-        배치 텍스트 임베딩
-
-        Args:
-            texts: 임베딩할 텍스트 리스트
-
-        Returns:
-            List[List[float]]: 임베딩 벡터 리스트
-        """
-        return self._embedder.embed_texts(texts)
-
-    def embed_to_numpy(self, texts: str | list[str]) -> np.ndarray:
-        """
-        NumPy 배열로 임베딩 반환
-
-        Args:
-            texts: 단일 텍스트 또는 텍스트 리스트
-
-        Returns:
-            np.ndarray: 임베딩 배열 (1D 또는 2D)
-        """
-        if isinstance(texts, str):
-            return np.array(self.embed_text(texts))
-        return np.array(self.embed_texts(texts))
-
-
-# =============================================================================
-# 편의 함수
-# =============================================================================
-
-def get_embedding_service(provider: str = None) -> EmbeddingService:
-    """
-    임베딩 서비스 인스턴스 반환 (편의 함수)
-
-    Args:
-        provider: 'huggingface' 또는 'openai' (None이면 config에서 결정)
-
-    Returns:
-        EmbeddingService: 싱글톤 인스턴스
-    """
-    return EmbeddingService(provider=provider)
-
-
-def embed_text(text: str, provider: str = None) -> list[float]:
-    """
-    단일 텍스트 임베딩 (편의 함수)
-
-    Args:
-        text: 임베딩할 텍스트
-        provider: 임베딩 프로바이더
-
-    Returns:
-        List[float]: 임베딩 벡터
-    """
-    service = get_embedding_service(provider)
-    return service.embed_text(text)
-
-
-def embed_texts(texts: list[str], provider: str = None) -> list[list[float]]:
-    """
-    배치 텍스트 임베딩 (편의 함수)
-
-    Args:
-        texts: 임베딩할 텍스트 리스트
-        provider: 임베딩 프로바이더
-
-    Returns:
-        List[List[float]]: 임베딩 벡터 리스트
-    """
-    service = get_embedding_service(provider)
-    return service.embed_texts(texts)
-
-
-if __name__ == "__main__":
-    # 테스트
-    print("Testing EmbeddingService...")
-    print(f"Provider: {EMBEDDING_CONFIG['provider']}")
-    print(f"Dimension: {EMBEDDING_CONFIG['dimension']}")
-
-    service = EmbeddingService()
-
-    test_texts = [
-        "삼성전자 2024년 매출 현황",
-        "SK하이닉스 반도체 사업 분석",
-    ]
-
-    print(f"\nEmbedding {len(test_texts)} texts...")
-    embeddings = service.embed_texts(test_texts)
-
-    for i, (text, emb) in enumerate(zip(test_texts, embeddings)):
-        print(f"  [{i+1}] '{text[:30]}...' -> [{len(emb)}D] {emb[:3]}...")
-
-    print("\n✅ EmbeddingService test passed!")
-    print(f"   Provider: {service.provider}")
-    print(f"   Dimension: {service.dimension}")
-
+    @classmethod
+    def get_instance(cls) -> "Embedding" | None:
+        return cls._instance

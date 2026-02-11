@@ -1,11 +1,6 @@
+
 ```
 enterprise-storm
-├─ assets
-│  ├─ co-storm-workflow.jpg
-│  ├─ logo.svg
-│  ├─ overview.svg
-│  ├─ storm_naacl2024_slides.pdf
-│  └─ two_stages.jpg
 ├─ backend
 │  ├─ assets
 │  │  └─ sample_report.md
@@ -13,12 +8,6 @@ enterprise-storm
 │  ├─ storm_service.py
 │  └─ __init__.py
 ├─ docker-compose.yml
-├─ docs
-│  ├─ API_SPEC.md
-│  ├─ FEAT-Core-002-HybridRM-Implementation.md
-│  ├─ FEAT-v2.1-dashboard-revolution.md
-│  ├─ FIX-Core-002-PostProcessingBridge.md
-│  └─ TEST_SUITE_DELIVERY.md
 ├─ examples
 │  ├─ costorm_examples
 │  │  └─ run_costorm_gpt.py
@@ -27,33 +16,8 @@ enterprise-storm
 │     │  └─ process_kaggle_arxiv_abstract_dataset.py
 │     ├─ README.md
 │     ├─ run_storm_wiki_claude.py
-│     ├─ run_storm_wiki_deepseek.py
-│     ├─ run_storm_wiki_gemini.py
-│     ├─ run_storm_wiki_gpt.py
-│     ├─ run_storm_wiki_gpt_with_VectorRM.py
-│     ├─ run_storm_wiki_groq.py
-│     ├─ run_storm_wiki_mistral.py
-│     ├─ run_storm_wiki_ollama.py
-│     ├─ run_storm_wiki_ollama_with_searxng.py
-│     └─ run_storm_wiki_serper.py
 ├─ frontend
 │  └─ react-app
-│     ├─ .eslintrc.json
-│     ├─ index.html
-│     ├─ package-lock.json
-│     ├─ package.json
-│     ├─ README.md
-│     ├─ src
-│     │  ├─ App.jsx
-│     │  ├─ components
-│     │  │  ├─ Dashboard.jsx
-│     │  │  └─ ReportViewer.jsx
-│     │  ├─ index.css
-│     │  ├─ main.jsx
-│     │  ├─ services
-│     │  │  └─ apiService.js
-│     │  └─ styles
-│     │     └─ ReportViewer.css
 │     └─ vite.config.js
 ├─ knowledge_storm
 │  ├─ collaborative_storm
@@ -74,9 +38,6 @@ enterprise-storm
 │  │  │  └─ __init__.py
 │  │  └─ __init__.py
 │  ├─ dataclass.py
-│  ├─ db
-│  │  ├─ postgres_connector.py
-│  │  └─ __init__.py
 │  ├─ encoder.py
 │  ├─ interface.py
 │  ├─ lm.py
@@ -102,12 +63,15 @@ enterprise-storm
 ├─ README.md
 ├─ requirements.txt
 ├─ scripts
+│  ├─ init_db.py
 │  ├─ run_ingestion.py
 │  └─ run_storm.py
 ├─ src
 │  ├─ common
 │  │  ├─ config.py
 │  │  ├─ embedding.py
+│  │  ├─ entity_resolver.py
+│  │  ├─ enums.py
 │  │  └─ __init__.py
 │  ├─ database
 │  │  ├─ connection.py
@@ -117,55 +81,70 @@ enterprise-storm
 │  │  │  ├─ script.py.mako
 │  │  │  └─ versions
 │  │  │     └─ 001_initial_schema.py
-│  │  ├─ models
-│  │  │  ├─ analysis_report.py
-│  │  │  ├─ base.py
-│  │  │  ├─ company.py
-│  │  │  ├─ generated_report.py
-│  │  │  ├─ source_material.py
-│  │  │  └─ __init__.py
-│  │  ├─ repositories
-│  │  │  ├─ analysis_report_repository.py
-│  │  │  ├─ base_repository.py
-│  │  │  ├─ company_repository.py
-│  │  │  ├─ generated_report_repository.py
-│  │  │  ├─ source_material_repository.py
-│  │  │  └─ __init__.py
 │  │  └─ __init__.py
 │  ├─ engine
 │  │  ├─ adapter.py
 │  │  ├─ builder.py
 │  │  ├─ io.py
+│  │  ├─ README.md
+│  │  ├─ retriever.py
 │  │  └─ __init__.py
-│  ├─ ingestion
-│  │  ├─ dart_agent.py
-│  │  ├─ embedding_worker.py
-│  │  ├─ pipeline.py
+│  ├─ models
+│  │  ├─ analysis_report.py
+│  │  ├─ base.py
+│  │  ├─ company.py
+│  │  ├─ generated_report.py
+│  │  ├─ report_job.py
+│  │  ├─ source_material.py
+│  │  └─ __init__.py
+│  ├─ repositories
+│  │  ├─ analysis_report_repository.py
+│  │  ├─ base_repository.py
+│  │  ├─ company_repository.py
+│  │  ├─ generated_report_repository.py
+│  │  ├─ report_job_repository.py
+│  │  ├─ source_material_repository.py
 │  │  └─ __init__.py
 │  ├─ schemas
 │  │  ├─ analysis_report.py
 │  │  ├─ base.py
 │  │  ├─ company.py
 │  │  ├─ generated_report.py
-│  │  └─ source_material.py
+│  │  ├─ llm_query_analysis_result.py
+│  │  ├─ report_job.py
+│  │  ├─ request.py
+│  │  ├─ search.py
+│  │  ├─ source_material.py
+│  │  └─ __init__.py
 │  ├─ services
 │  │  ├─ analysis_service.py
 │  │  ├─ company_service.py
+│  │  ├─ dart_service.py
 │  │  ├─ generation_service.py
-│  │  ├─ vector_search_service.py
+│  │  ├─ ingestion_service.py
+│  │  ├─ llm_query_analyzer.py
+│  │  ├─ reranker_service.py
+│  │  ├─ source_material_service.py
 │  │  └─ __init__.py
 │  └─ __init__.py
 ├─ start_backend.sh
-└─ tests
-   ├─ conftest.py
-   ├─ integration
-   │  ├─ test_db_connection.py
-   │  ├─ test_repositories.py
-   │  └─ __init__.py
-   ├─ README.md
-   ├─ unit
-   │  ├─ test_generation_service.py
-   │  └─ __init__.py
-   └─ __init__.py
+├─ tests
+│  ├─ conftest.py
+│  ├─ integration
+│  │  ├─ test_db_connection.py
+│  │  ├─ test_repositories.py
+│  │  └─ __init__.py
+│  ├─ README.md
+│  ├─ unit
+│  │  ├─ test_generation_service.py
+│  │  └─ __init__.py
+│  └─ __init__.py
+
+## Database schema notes
+
+- `src/database/migrations` is kept for developer use only (local schema checks, experiments).
+- Production or shared environments should use a controlled migration process, but this repo does not enforce Alembic at runtime.
+- For local runs without Alembic, set `AUTO_CREATE_SCHEMA=1` to create tables from models at startup.
+
 
 ```

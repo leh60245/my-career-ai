@@ -4,7 +4,7 @@ from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.common import ReportJobStatus
-from src.models import Base, TimestampMixin
+from src.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from src.models import Company, GeneratedReport
@@ -22,6 +22,9 @@ class ReportJob(Base, TimestampMixin):
     )  # PENDING, PROCESSING, COMPLETED, FAILED
     company_name: Mapped[str] = mapped_column(String(255), nullable=False)
     topic: Mapped[str] = mapped_column(String, nullable=False)
+
+    # error message if any
+    error_message: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Relationships
     company: Mapped["Company"] = relationship("Company", back_populates="report_jobs")

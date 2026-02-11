@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -11,8 +10,7 @@ class AnalysisReportBase(BaseModel):
     rcept_no: str = Field(..., max_length=20, description="DART receipt number (unique)")
     rcept_dt: str = Field(..., max_length=10, description="Receipt date (YYYYMMDD)")
     report_type: str = Field(default="annual", max_length=50, description="Report type")
-    basic_info: dict[str, Any] | None = Field(None, description="Additional metadata")
-    status: str = Field(default="Raw_Loaded", max_length=50, description="Processing status")
+    status: str = Field(default="PENDING", max_length=50, description="Processing status")
 
 
 class AnalysisReportCreate(AnalysisReportBase):
@@ -28,8 +26,7 @@ class AnalysisReportCreate(AnalysisReportBase):
                 "rcept_no": "20240101000001",
                 "rcept_dt": "20240101",
                 "report_type": "annual",
-                "basic_info": {"fiscal_year": 2023, "pages": 250},
-                "status": "Raw_Loaded",
+                "status": "PENDING",
             }
         }
     )
@@ -40,10 +37,9 @@ class AnalysisReportUpdate(BaseModel):
 
     title: str | None = Field(None, max_length=500)
     report_type: str | None = Field(None, max_length=50)
-    basic_info: dict[str, Any] | None = None
     status: str | None = Field(None, max_length=50)
 
-    model_config = ConfigDict(json_schema_extra={"example": {"status": "Embedded"}})
+    model_config = ConfigDict(json_schema_extra={"example": {"status": "COMPLETED"}})
 
 
 class AnalysisReportResponse(AnalysisReportBase):
@@ -52,7 +48,6 @@ class AnalysisReportResponse(AnalysisReportBase):
     id: int
     company_id: int
     created_at: datetime
-    updated_at: datetime
 
     model_config = ConfigDict(
         from_attributes=True,
@@ -64,10 +59,8 @@ class AnalysisReportResponse(AnalysisReportBase):
                 "rcept_no": "20240101000001",
                 "rcept_dt": "20240101",
                 "report_type": "annual",
-                "basic_info": {"fiscal_year": 2023, "pages": 250},
-                "status": "Embedded",
+                "status": "COMPLETED",
                 "created_at": "2024-01-15T10:30:00",
-                "updated_at": "2024-01-15T12:00:00",
             }
         },
     )

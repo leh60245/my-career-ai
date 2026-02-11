@@ -1,3 +1,4 @@
+import inspect
 import logging
 
 from openai import AsyncOpenAI
@@ -13,6 +14,17 @@ class LLMQueryAnalyzer:
         # 분석용 모델은 싸고 빠른 모델(gpt-4o-mini) 사용 권장
         self.client = AsyncOpenAI(api_key=AI_CONFIG["openai_api_key"])
         self.model = "gpt-4o-mini"
+
+    async def aclose(self) -> None:
+        """Close underlying async HTTP client to avoid shutdown loop errors."""
+        if not self.client:
+            return
+        close_fn = getattr(self.client, "aclose", None) or getattr(self.client, "close", None)
+        if not close_fn:
+            return
+        result = close_fn()
+        if inspect.isawaitable(result):
+            await result
 
     async def analyze(self, query: str) -> LLMQueryAnalysisResult:
         """

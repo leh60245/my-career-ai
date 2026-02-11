@@ -21,16 +21,13 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from src.database.models.analysis_report import AnalysisReport
+from src.models.analysis_report import AnalysisReport
 # ============================================================================
 # CRITICAL: Import SQLAlchemy Base and ALL Models
 # ============================================================================
 # Without these imports, Alembic cannot detect the model metadata
 # and will create migrations with missing tables/columns.
-from src.database.models.base import Base
-from src.database.models.company import Company
-from src.database.models.generated_report import GeneratedReport
-from src.database.models.source_material import SourceMaterial
+from src.schemas.base import Base
 
 # this is the Alembic Config object, which provides
 # the values of the [alembic] section of the .ini file

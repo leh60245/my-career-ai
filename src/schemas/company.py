@@ -21,7 +21,9 @@ class CompanyCreate(BaseModel):
 
     stock_code: str | None = Field(None, max_length=20, description="6-digit Korea Exchange stock code")
 
-    industry: str | None = Field(None, max_length=100, description="Industry classification")
+    industry_code: str | None = Field(None, max_length=100, description="Industry classification code")
+    sector: str | None = Field(None, max_length=100, description="Business sector")
+    product: str | None = Field(None, max_length=255, description="Main products/services")
 
     @field_validator("company_name")
     @classmethod
@@ -38,7 +40,7 @@ class CompanyCreate(BaseModel):
                 "company_name": "삼성전자",
                 "corp_code": "005930",
                 "stock_code": "005930",
-                "industry": "Semiconductor",
+                "sector": "Semiconductor",
             }
         }
 
@@ -56,10 +58,12 @@ class CompanyUpdate(BaseModel):
 
     stock_code: str | None = Field(None, max_length=20, description="Korea Exchange stock code")
 
-    industry: str | None = Field(None, max_length=100, description="Industry classification")
+    industry_code: str | None = Field(None, max_length=100, description="Industry classification code")
+    sector: str | None = Field(None, max_length=100, description="Business sector")
+    product: str | None = Field(None, max_length=255, description="Main products/services")
 
     class Config:
-        json_schema_extra = {"example": {"industry": "Electronics"}}
+        json_schema_extra = {"example": {"sector": "Electronics"}}
 
 
 class CompanyResponse(BaseModel):
@@ -75,12 +79,14 @@ class CompanyResponse(BaseModel):
 
     stock_code: str | None = Field(None, description="Korea Exchange stock code")
 
-    industry: str | None = Field(None, description="Industry classification")
+    industry_code: str | None = Field(None, description="Industry classification code")
+    sector: str | None = Field(None, description="Business sector")
+    product: str | None = Field(None, description="Main products/services")
 
     created_at: datetime = Field(..., description="Creation timestamp")
     """UTC timestamp of record creation"""
 
-    updated_at: datetime = Field(..., description="Last update timestamp")
+    updated_at: datetime | None = Field(None, description="Last update timestamp")
     """UTC timestamp of last modification"""
 
     class Config:
@@ -92,7 +98,7 @@ class CompanyResponse(BaseModel):
                 "company_name": "삼성전자",
                 "corp_code": "005930",
                 "stock_code": "005930",
-                "industry": "Semiconductor",
+                "sector": "Semiconductor",
                 "created_at": "2026-01-15T08:30:00+00:00",
                 "updated_at": "2026-01-21T10:45:30+00:00",
             }
