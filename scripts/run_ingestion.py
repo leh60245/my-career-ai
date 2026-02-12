@@ -7,12 +7,14 @@ import os
 import sys
 from datetime import datetime, timedelta
 
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.common import Embedding
+from src.company_analysis.repositories import AnalysisReportRepository, CompanyRepository, SourceMaterialRepository
 from src.database import AsyncDatabaseEngine
-from src.repositories import AnalysisReportRepository, CompanyRepository, SourceMaterialRepository
 from src.services import AnalysisService, CompanyService, DartService, IngestionService
+
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S")

@@ -5,17 +5,20 @@ React 기반 프론트엔드 애플리케이션으로 백엔드 API (localhost:8
 ## 설치 및 실행
 
 ### 1. 의존성 설치
+
 ```bash
 cd frontend/react-app
 npm install
 ```
 
 ### 2. 개발 서버 실행 (localhost:3000)
+
 ```bash
 npm run dev
 ```
 
 ### 3. 프로덕션 빌드
+
 ```bash
 npm run build
 ```
@@ -40,12 +43,12 @@ npm run build
 
 ```bash
 # 백엔드 실행 (프로젝트 루트)
-python -m uvicorn backend.main:app --reload --port 8000
+python -m uvicorn main:app --reload --port 8000
 ```
 
 ## 개발
 
 ### 컴포넌트 추가
+
 - Dashboard: 기업 선택 및 생성 요청
 - ReportViewer: Markdown 리포트 렌더링
-

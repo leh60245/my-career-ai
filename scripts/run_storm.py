@@ -23,15 +23,17 @@ import os
 import sys
 from argparse import ArgumentParser
 
+
 # 프로젝트 루트 경로 설정
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.common import AI_CONFIG, TOPICS, ReportJobStatus
+from src.company_analysis.repositories.company_repository import CompanyRepository
+from src.company_analysis.repositories.report_job_repository import ReportJobRepository
 from src.database.connection import AsyncDatabaseEngine, ensure_schema
 from src.engine.storm_pipeline import run_storm_pipeline
-from src.repositories.company_repository import CompanyRepository
-from src.repositories.report_job_repository import ReportJobRepository
 from src.services.report_job_service import ReportJobService
+
 
 # 로깅 설정
 logging.basicConfig(

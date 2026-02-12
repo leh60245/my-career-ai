@@ -4,8 +4,9 @@ import logging
 import os
 import sys
 
+from src.common.models.base import Base
 from src.database import AsyncDatabaseEngine
-from src.models.base import Base
+
 
 # [1] 프로젝트 루트 경로 설정 (src 모듈 인식을 위해 필수)
 current_dir = os.path.dirname(os.path.abspath(__file__))
