@@ -17,21 +17,16 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from backend.storm_service import StormService
 from src.common.config import TOPICS
-from src.database.connection import AsyncDatabaseEngine
-from src.schemas import (
-    CompanyResponse,
-    GeneratedReportResponse,
-    GenerateReportRequest,
-    ReportJobResponse,
-    ReportListResponse,
-    ReportSummary,
-)
-from src.services.company_service import CompanyService
-from src.services.generated_report_service import GeneratedReportService
-from src.services.report_job_service import ReportJobService
+from src.common.database.connection import AsyncDatabaseEngine
+from src.company_analysis.schemas.company import CompanyResponse
+from src.company_analysis.schemas.generated_report import GeneratedReportResponse, GenerateReportRequest
+from src.company_analysis.schemas.report_job import ReportJobResponse, ReportListResponse, ReportSummary
+from src.company_analysis.services.company_service import CompanyService
+from src.company_analysis.services.generated_report_service import GeneratedReportService
+from src.company_analysis.services.report_job_service import ReportJobService
+from src.company_analysis.services.storm_service import StormService
+
 
 # ============================================================
 # Setup
@@ -292,10 +287,10 @@ async def internal_error_handler(request, exc):
 2. 터미널에서 실행:
 
    # 개발 모드 (자동 리로드 — 소스 디렉토리만 감시)
-   python -m uvicorn backend.main:app --reload --port 8000 --reload-dir backend --reload-dir src
+   python -m uvicorn main:app --reload --port 8000 --reload-dir backend --reload-dir backend
 
    # 프로덕션 모드
-   python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 4
+   python -m uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
 
 [검증 명령어]
 1. Health Check:
