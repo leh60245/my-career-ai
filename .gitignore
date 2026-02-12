@@ -26,3 +26,10 @@ secrets.toml
 */assertion.log
 *results/
 .venv/
+
+# 예제 streamlit 파일
+frontend/demo_light
+
+# wish list
+wishlist.md
+*.csv

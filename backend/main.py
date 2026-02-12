@@ -196,6 +196,7 @@ async def get_job_status(
             "progress": mem_status["progress"],
             "message": mem_status.get("message", ""),
             "report_id": mem_status.get("report_id"),
+            "quality_grade": mem_status.get("quality_grade"),
         }
 
     # DB 폴백 (서버 재시작 후 등) — Service 계층 사용

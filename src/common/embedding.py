@@ -51,6 +51,10 @@ class BaseEmbedder(ABC):
         """임베딩 차원 수 반환"""
         pass
 
+    async def aclose(self) -> None:
+        """Optional async close hook for underlying clients."""
+        return
+
 
 class OpenAIEmbedder(BaseEmbedder):
     """
@@ -112,7 +116,7 @@ class HuggingFaceEmbedder(BaseEmbedder):
     """
 
     def __init__(self, model_name: str | None = None, device: str | None = None, batch_size: int | None = None):
-        self.model_name = model_name or EMBEDDING_CONFIG.get("hf_model")
+        self.model_name = model_name or EMBEDDING_CONFIG.get("hf_model", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
         self.batch_size = batch_size or EMBEDDING_CONFIG.get("batch_size", 32)
         self.device = device or get_optimal_device()
 
@@ -228,8 +232,10 @@ class Embedding:
 
     @property
     def dimension(self) -> int:
+        if not self._embedder:
+            raise RuntimeError("Embedder not initialized.")
         return self._embedder.get_dimension()
 
     @classmethod
-    def get_instance(cls) -> "Embedding" | None:
+    def get_instance(cls) -> Optional["Embedding"]:
         return cls._instance

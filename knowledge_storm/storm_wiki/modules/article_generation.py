@@ -2,14 +2,14 @@ import concurrent.futures
 import copy
 import logging
 from concurrent.futures import as_completed
-from typing import List, Union
+from typing import Union
 
 import dspy
 
-from .callback import BaseCallbackHandler
-from .storm_dataclass import StormInformationTable, StormArticle
 from ...interface import ArticleGenerationModule, Information
 from ...utils import ArticleTextProcessing
+from .callback import BaseCallbackHandler
+from .storm_dataclass import StormArticle, StormInformationTable
 
 
 class StormArticleGenerationModule(ArticleGenerationModule):
@@ -33,7 +33,7 @@ class StormArticleGenerationModule(ArticleGenerationModule):
     def generate_section(
         self, topic, section_name, information_table, section_outline, section_query
     ):
-        collected_info: List[Information] = []
+        collected_info: list[Information] = []
         if information_table is not None:
             collected_info = information_table.retrieve_information(
                 queries=section_query, search_top_k=self.retrieve_top_k
@@ -136,13 +136,13 @@ class StormArticleGenerationModule(ArticleGenerationModule):
 class ConvToSection(dspy.Module):
     """Use the information collected from the information-seeking conversation to write a section."""
 
-    def __init__(self, engine: Union[dspy.dsp.LM, dspy.dsp.HFModel]):
+    def __init__(self, engine: dspy.dsp.LM | dspy.dsp.HFModel):
         super().__init__()
         self.write_section = dspy.Predict(WriteSection)
         self.engine = engine
 
     def forward(
-        self, topic: str, outline: str, section: str, collected_info: List[Information]
+        self, topic: str, outline: str, section: str, collected_info: list[Information]
     ):
         info = ""
         for idx, storm_info in enumerate(collected_info):
@@ -170,6 +170,10 @@ class WriteSection(dspy.Signature):
         - When the collected information contains tables or numerical values, ALWAYS check for meta information at the end of the paragraph (such as units, legends, base dates, currency).
         - Apply these meta details correctly when interpreting and presenting numbers (e.g., "단위: 백만원" means values are in millions of KRW).
         - If "[참고:" appears at the beginning, pay special attention to the merged metadata note.
+
+    Important guidelines for recency and dates:
+        - Always state explicit dates or periods (e.g., "2025년", "2024 회계연도") instead of vague terms like "최근" or "recently".
+        - When the collected information spans different time periods, prefer the most recent data and note when older data is used.
     """
 
     info = dspy.InputField(prefix="The collected information:\n", format=str)

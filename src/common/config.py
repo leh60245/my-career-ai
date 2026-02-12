@@ -106,6 +106,70 @@ AI_CONFIG = {
 }
 
 
+# =============================================================================
+# Serper Search Configuration (외부 검색 파라미터)
+# =============================================================================
+# 환경변수 또는 여기서 직접 설정. 런타임 중 변경 가능하도록 dict 분리.
+SERPER_CONFIG = {
+    # 국가/언어 설정 (기본: 한국)
+    "gl": os.getenv("SERPER_GL", "kr"),          # 검색 대상 국가
+    "hl": os.getenv("SERPER_HL", "ko"),          # 결과 표시 언어
+    "location": os.getenv("SERPER_LOCATION", "South Korea"),  # 검색 발신 위치
+    # 시간대 필터 (기본: 최근 1년)
+    # 옵션: qdr:h(1시간), qdr:d(24시간), qdr:w(1주), qdr:m(1개월), qdr:y(1년), ""(전체)
+    "tbs": os.getenv("SERPER_TBS", "qdr:y"),
+    # 자동 교정
+    "autocorrect": os.getenv("SERPER_AUTOCORRECT", "true").lower() == "true",
+    # 페이지 설정
+    "page": int(os.getenv("SERPER_PAGE", "1")),
+}
+
+
+# =============================================================================
+# Domain Blacklist (신뢰할 수 없는 출처 차단)
+# =============================================================================
+# 개인 블로그, 비전문 사이트 등을 원천 차단합니다.
+# 도메인 부분 일치: "tistory.com"은 *.tistory.com 전체를 차단합니다.
+DOMAIN_BLACKLIST: list[str] = [
+    # 개인 블로그 플랫폼
+    "tistory.com",
+    "velog.io",
+    "blog.naver.com",
+    "brunch.co.kr",
+    "medium.com",
+    "steemit.com",
+    # 위키/커뮤니티 (비전문)
+    "namu.wiki",
+    "namuwiki.mirror",
+    "rigvedawiki.net",
+    "fmkorea.com",
+    "dcinside.com",
+    "ruliweb.com",
+    "theqoo.net",
+    "instiz.net",
+    "clien.net",
+    "mlbpark.donga.com",
+    # 기타 비전문 / 저신뢰
+    "quora.com",
+    "reddit.com",
+    "yahoo.com/answers",
+    "nate.com/pann",
+]
+
+# 환경변수로 추가 블랙리스트: 쉼표 구분 (예: EXTRA_BLACKLIST="example.com,foo.io")
+_extra_blacklist = os.getenv("EXTRA_DOMAIN_BLACKLIST", "")
+if _extra_blacklist:
+    DOMAIN_BLACKLIST.extend([d.strip() for d in _extra_blacklist.split(",") if d.strip()])
+
+
+def is_blacklisted_url(url: str) -> bool:
+    """URL이 블랙리스트 도메인에 해당하는지 검사"""
+    if not url:
+        return False
+    url_lower = url.lower()
+    return any(domain in url_lower for domain in DOMAIN_BLACKLIST)
+
+
 # Analysis Topic Configuration (분석 주제 중앙 관리)
 # =============================================================================
 # Topic 정의 (공통 사용)

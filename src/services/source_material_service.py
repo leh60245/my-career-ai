@@ -69,10 +69,11 @@ class SourceMaterialService:
 
         for row in raw_rows:
             # SourceMaterialRepository.search_by_vector의 반환값 구조에 맞춤
-            # (SourceMaterial, company_name, distance)
+            # (SourceMaterial, company_name, distance, report_title)
             material: SourceMaterial = row[0]
             company_name: str = row[1]
             distance: float = row[2]
+            report_title: str = row[3] if len(row) > 3 else ""
 
             # Distance(거리) -> Score(유사도) 변환 (Cosine Distance 기준)
             score = 1 - distance
@@ -102,8 +103,8 @@ class SourceMaterialService:
                 "source": "vector",
                 # Internal Metadata
                 "_company_name": company_name,
-                # _intent, _matched_entities는 이제 상위(HybridRM)에서 관리하므로 여기서 굳이 안 넣어도 됨
-                # 필요하다면 context passing 용도로 추가 가능
+                "_report_title": report_title,
+                "_section_path": material.section_path or "",
             }
             results.append(result_item)
 

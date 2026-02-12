@@ -34,6 +34,6 @@ class AnalysisReport(Base, CreatedAtMixin):
     source_materials: Mapped[list["SourceMaterial"]] = relationship(
         "SourceMaterial",
         back_populates="analysis_report",
-        lazy="selectin",
+        lazy="select",
         cascade="all, delete-orphan",
     )

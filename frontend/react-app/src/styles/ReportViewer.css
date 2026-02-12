@@ -111,6 +111,29 @@
   border-bottom: 1px solid #1565c0;
 }
 
+/* Citation links (superscript) */
+.markdown-container a[href] sup,
+.markdown-container a sup {
+  font-size: 0.8em;
+  vertical-align: super;
+}
+
+/* Smooth scroll target highlighting */
+[id]:target {
+  scroll-margin-top: 20px;
+  animation: highlight-flash 1.5s ease-out;
+}
+
+@keyframes highlight-flash {
+  0% {
+    background-color: #fff9c4;
+  }
+
+  100% {
+    background-color: transparent;
+  }
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
   .markdown-container {
@@ -124,5 +147,11 @@
   .markdown-container table th,
   .markdown-container table td {
     padding: 8px;
+  }
+}
+
+@media (max-width: 960px) {
+  .report-layout {
+    flex-direction: column;
   }
 }
