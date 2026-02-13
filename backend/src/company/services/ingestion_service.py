@@ -4,8 +4,8 @@ from collections.abc import Sequence
 from typing import Any
 
 from src.common.embedding import Embedding
-from src.company_analysis.models.source_material import SourceMaterial
-from src.company_analysis.repositories.source_material_repository import SourceMaterialRepository
+from src.company.models.source_material import SourceMaterial
+from src.company.repositories.source_material_repository import SourceMaterialRepository
 
 
 logger = logging.getLogger(__name__)

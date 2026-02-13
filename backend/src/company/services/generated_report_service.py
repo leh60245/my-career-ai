@@ -2,8 +2,8 @@ import logging
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.company_analysis.models.generated_report import GeneratedReport
-from src.company_analysis.repositories.generated_report_repository import GeneratedReportRepository
+from src.company.models.generated_report import GeneratedReport
+from src.company.repositories.generated_report_repository import GeneratedReportRepository
 
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,6 @@ class GeneratedReportService:
         meta_info: dict[str, Any] | None = None,
         toc_text: str | None = None,
         references_data: dict[str, Any] | None = None,
-        conversation_log: dict[str, Any] | None = None,
     ) -> GeneratedReport:
         """
         STORM 결과물을 DB에 저장
@@ -49,7 +48,6 @@ class GeneratedReportService:
             "meta_info": meta_info,
             "toc_text": toc_text,
             "references_data": references_data,
-            "conversation_log": conversation_log,
         }
 
         # DB 저장

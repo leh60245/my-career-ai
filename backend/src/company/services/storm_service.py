@@ -3,7 +3,7 @@ Backend STORM Service (Job Manager)
 
 역할:
     - 메모리 기반 JOBS dict로 실시간 진행률 관리
-    - src.company_analysis.engine.storm_pipeline에 실행을 위임
+    - src.company.engine.storm_pipeline에 실행을 위임
     - 프론트엔드 polling용 상태 조회 API 제공
 
 핵심: 직접 분석하지 않습니다. 분석은 Engine이, DB는 Pipeline이 처리합니다.
@@ -79,14 +79,14 @@ class StormService:
     ) -> None:
         """
         Background Task로 실행됩니다.
-        src.company_analysis.engine.storm_pipeline에 모든 실행을 위임합니다.
+        src.company.engine.storm_pipeline에 모든 실행을 위임합니다.
         """
         logger.info(f"🔄 [StormService] Delegating pipeline for job {job_id} ({company_name})")
 
         try:
             # Lazy import: knowledge_storm + torch 등 무거운 의존성을 서버 시작 시가 아닌
             # 파이프라인 실행 시점에만 로드합니다.
-            from src.company_analysis.engine.storm_pipeline import run_storm_pipeline
+            from src.company.engine.storm_pipeline import run_storm_pipeline
 
             await run_storm_pipeline(
                 job_id=job_id,

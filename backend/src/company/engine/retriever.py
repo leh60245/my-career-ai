@@ -5,14 +5,15 @@ from typing import Any
 import dspy
 import nest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from src.common import CompanyEntityResolver, Embedding
 from src.common.config import AI_CONFIG, SERPER_CONFIG, is_blacklisted_url
 from src.common.database.connection import AsyncDatabaseEngine, create_isolated_engine
-from src.company_analysis.repositories.company_repository import CompanyRepository
-from src.company_analysis.repositories.source_material_repository import SourceMaterialRepository
-from src.company_analysis.services.llm_query_analyzer import LLMQueryAnalyzer
-from src.company_analysis.services.reranker_service import RerankerService
-from src.company_analysis.services.source_material_service import SourceMaterialService
+from src.common.embedding import Embedding
+from src.common.entity_resolver import CompanyEntityResolver
+from src.company.repositories.company_repository import CompanyRepository
+from src.company.repositories.source_material_repository import SourceMaterialRepository
+from src.company.services.llm_query_analyzer import LLMQueryAnalyzer
+from src.company.services.reranker_service import RerankerService
+from src.company.services.source_material_service import SourceMaterialService
 
 from knowledge_storm.rm import SerperRM
 

@@ -9,9 +9,9 @@ import logging
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.company_analysis.repositories.company_repository import CompanyRepository
-from src.company_analysis.repositories.generated_report_repository import GeneratedReportRepository
-from src.company_analysis.services.generated_report_service import GeneratedReportService
+from src.company.repositories.company_repository import CompanyRepository
+from src.company.repositories.generated_report_repository import GeneratedReportRepository
+from src.company.services.generated_report_service import GeneratedReportService
 
 from .io import find_topic_directory, load_storm_output_files
 
@@ -141,7 +141,6 @@ async def save_storm_result_from_memory(
             meta_info=meta_info,
             toc_text=toc_text,
             references_data=references_data,
-            conversation_log=conv_log,
         )
 
         logger.info(f"[{job_id}] ✅ Report saved from memory: ID {report.id}")

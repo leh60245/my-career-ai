@@ -5,7 +5,7 @@ from collections.abc import Sequence
 import torch
 from sentence_transformers import CrossEncoder
 from src.common.config import AI_CONFIG
-from src.company_analysis.schemas.search import SearchResult
+from src.company.schemas.search import SearchResult
 
 
 logger = logging.getLogger(__name__)

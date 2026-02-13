@@ -1,10 +1,10 @@
 import logging
 from collections.abc import Sequence
 
-from src.common import Embedding
-from src.company_analysis.models.source_material import SourceMaterial
-from src.company_analysis.repositories.source_material_repository import SourceMaterialRepository
-from src.company_analysis.schemas.search import SearchResult
+from src.common.embedding import Embedding
+from src.company.models.source_material import SourceMaterial
+from src.company.repositories.source_material_repository import SourceMaterialRepository
+from src.company.schemas.search import SearchResult
 
 from .reranker_service import RerankerService
 
@@ -105,8 +105,6 @@ class SourceMaterialService:
                 "source": "vector",
                 # Internal Metadata
                 "_company_name": company_name,
-                "_report_title": report_title,
-                "_section_path": material.section_path or "",
             }
             results.append(result_item)
 

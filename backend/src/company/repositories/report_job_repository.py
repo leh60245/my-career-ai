@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.enums import ReportJobStatus
 from src.common.repositories.base_repository import BaseRepository
-from src.company_analysis.models.report_job import ReportJob
+from src.company.models.report_job import ReportJob
 
 
 class ReportJobRepository(BaseRepository[ReportJob]):

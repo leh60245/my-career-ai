@@ -1,8 +1,8 @@
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.company_analysis.models.company import Company
-from src.company_analysis.repositories.company_repository import CompanyRepository
+from src.company.models.company import Company
+from src.company.repositories.company_repository import CompanyRepository
 
 
 logger = logging.getLogger(__name__)

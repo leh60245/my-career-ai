@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.repositories.base_repository import BaseRepository, RepositoryError
-from src.company_analysis.models.company import Company
+from src.company.models.company import Company
 
 
 logger = logging.getLogger(__name__)

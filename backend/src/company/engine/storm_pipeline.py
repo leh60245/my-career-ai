@@ -7,10 +7,10 @@ import traceback
 from src.common.config import AI_CONFIG
 from src.common.database.connection import AsyncDatabaseEngine
 from src.common.enums import ReportJobStatus
-from src.company_analysis.repositories.company_repository import CompanyRepository
-from src.company_analysis.repositories.report_job_repository import ReportJobRepository
-from src.company_analysis.services.quality_inspector import evaluate_report_quality
-from src.company_analysis.services.report_job_service import ReportJobService
+from src.company.repositories.company_repository import CompanyRepository
+from src.company.repositories.report_job_repository import ReportJobRepository
+from src.company.services.quality_inspector import evaluate_report_quality
+from src.company.services.report_job_service import ReportJobService
 
 from knowledge_storm import STORMWikiRunner, STORMWikiRunnerArguments
 

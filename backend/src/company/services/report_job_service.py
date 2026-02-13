@@ -4,8 +4,8 @@ from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.enums import ReportJobStatus
-from src.company_analysis.models.report_job import ReportJob
-from src.company_analysis.repositories.report_job_repository import ReportJobRepository
+from src.company.models.report_job import ReportJob
+from src.company.repositories.report_job_repository import ReportJobRepository
 
 
 logger = logging.getLogger(__name__)

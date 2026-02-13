@@ -19,13 +19,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.config import TOPICS
 from src.common.database.connection import AsyncDatabaseEngine
-from src.company_analysis.schemas.company import CompanyResponse
-from src.company_analysis.schemas.generated_report import GeneratedReportResponse, GenerateReportRequest
-from src.company_analysis.schemas.report_job import ReportJobResponse, ReportListResponse, ReportSummary
-from src.company_analysis.services.company_service import CompanyService
-from src.company_analysis.services.generated_report_service import GeneratedReportService
-from src.company_analysis.services.report_job_service import ReportJobService
-from src.company_analysis.services.storm_service import StormService
+from src.company.schemas.company import CompanyResponse
+from src.company.schemas.generated_report import GeneratedReportResponse, GenerateReportRequest
+from src.company.schemas.report_job import ReportJobResponse, ReportListResponse, ReportSummary
+from src.company.services.company_service import CompanyService
+from src.company.services.generated_report_service import GeneratedReportService
+from src.company.services.report_job_service import ReportJobService
+from src.company.services.storm_service import StormService
 
 
 # ============================================================

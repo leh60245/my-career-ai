@@ -3,7 +3,7 @@ import logging
 
 from openai import AsyncOpenAI
 from src.common.config import AI_CONFIG
-from src.company_analysis.schemas.llm_query_analysis_result import LLMQueryAnalysisResult
+from src.company.schemas.llm_query_analysis_result import LLMQueryAnalysisResult
 
 
 logger = logging.getLogger(__name__)

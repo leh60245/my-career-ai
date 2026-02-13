@@ -20,7 +20,7 @@ from pathlib import Path
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from src.company_analysis.models.analysis_report import AnalysisReport
+from src.company.models.analysis_report import AnalysisReport
 # ============================================================================
 # CRITICAL: Import SQLAlchemy Base and ALL Models
 # ============================================================================

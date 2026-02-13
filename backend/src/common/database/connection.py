@@ -6,9 +6,9 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (AsyncEngine, AsyncSession,
+                                    async_sessionmaker, create_async_engine)
 from src.common.models.base import Base
-
 
 # .env 파일 로드
 load_dotenv()
@@ -115,7 +115,9 @@ async def ensure_schema(reset: bool = False) -> None:
     개발/테스트 환경에서만 사용하세요.
     """
     # 모델 등록을 위해 임포트 (Base.metadata 채우기)
-    from src.company_analysis.models import analysis_report, company, generated_report, report_job, source_material  # noqa: F401
+    from src.company.models import (analysis_report, company,  # noqa: F401
+                                    generated_report, report_job,
+                                    source_material)
 
     db = AsyncDatabaseEngine()
     async with db.engine.begin() as conn:
