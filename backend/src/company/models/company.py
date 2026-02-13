@@ -8,6 +8,7 @@ from src.common.models.base import Base, TimestampMixin
 if TYPE_CHECKING:
     from .analysis_report import AnalysisReport
     from .report_job import ReportJob
+    from .talent import CompanyTalent
 
 
 class Company(
@@ -41,6 +42,9 @@ class Company(
     )
     report_jobs: Mapped[list["ReportJob"]] = relationship(
         "ReportJob", back_populates="company", lazy="select", cascade="all, delete-orphan"
+    )
+    talents: Mapped[list["CompanyTalent"]] = relationship(
+        "CompanyTalent", back_populates="company", lazy="select", cascade="all, delete-orphan"
     )
 
     __table_args__ = (

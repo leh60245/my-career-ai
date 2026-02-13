@@ -69,7 +69,7 @@ async def shutdown_event():
     logger.info("🛑 Shutting down API...")
     await db_engine.dispose()
     try:
-        from src.common.embedding import Embedding
+        from backend.src.common.services.embedding import Embedding
 
         embedding = Embedding.get_instance()
         if embedding:

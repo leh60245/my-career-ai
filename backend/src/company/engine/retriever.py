@@ -7,8 +7,8 @@ import nest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from src.common.config import AI_CONFIG, SERPER_CONFIG, is_blacklisted_url
 from src.common.database.connection import AsyncDatabaseEngine, create_isolated_engine
-from src.common.embedding import Embedding
-from src.common.entity_resolver import CompanyEntityResolver
+from backend.src.common.services.embedding import Embedding
+from backend.src.common.services.entity_resolver import CompanyEntityResolver
 from src.company.repositories.company_repository import CompanyRepository
 from src.company.repositories.source_material_repository import SourceMaterialRepository
 from src.company.services.llm_query_analyzer import LLMQueryAnalyzer

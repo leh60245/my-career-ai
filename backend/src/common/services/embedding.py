@@ -9,7 +9,7 @@ from openai import AsyncOpenAI
 
 
 try:
-    from .config import EMBEDDING_CONFIG
+    from ..config import EMBEDDING_CONFIG
 except ImportError:
     EMBEDDING_CONFIG = {
         "provider": "openai",

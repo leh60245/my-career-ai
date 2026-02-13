@@ -3,7 +3,7 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-from src.common.embedding import Embedding
+from src.common.services.embedding import Embedding
 from src.company.models.source_material import SourceMaterial
 from src.company.repositories.source_material_repository import SourceMaterialRepository
 

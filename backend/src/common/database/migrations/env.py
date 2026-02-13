@@ -20,13 +20,23 @@ from pathlib import Path
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from src.company.models.analysis_report import AnalysisReport
 # ============================================================================
 # CRITICAL: Import SQLAlchemy Base and ALL Models
 # ============================================================================
 # Without these imports, Alembic cannot detect the model metadata
 # and will create migrations with missing tables/columns.
-from src.schemas.base import Base
+from src.common.models.base import Base
+from src.common.models.job import JobCategory  # noqa: F401
+from src.company.models.analysis_report import AnalysisReport  # noqa: F401
+from src.company.models.company import Company  # noqa: F401
+from src.company.models.generated_report import GeneratedReport  # noqa: F401
+from src.company.models.report_job import ReportJob  # noqa: F401
+from src.company.models.source_material import SourceMaterial  # noqa: F401
+from src.company.models.talent import CompanyTalent  # noqa: F401
+from src.resume.models import (ResumeDraft, ResumeFeedback,  # noqa: F401
+                               ResumeItem, ResumeQuestion)
+from src.user.models import (Affiliation, JobSeekerProfile,  # noqa: F401
+                             ManagerProfile, User)
 
 # this is the Alembic Config object, which provides
 # the values of the [alembic] section of the .ini file
@@ -67,7 +77,7 @@ def run_migrations_offline() -> None:
     """
     configuration = config.get_section(config.config_ini_section)
     configuration["sqlalchemy.url"] = (
-        Path.cwd() / "src/database/migrations/alembic.ini"
+        Path.cwd() / "src/common/database/migrations/alembic.ini"
     )
 
     context.configure(
