@@ -2,8 +2,9 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from src.common.enums import ReportJobStatus
-from src.common.models.base import Base, TimestampMixin
+
+from backend.src.common.enums import ReportJobStatus
+from backend.src.common.models.base import Base, TimestampMixin
 
 
 if TYPE_CHECKING:
@@ -30,7 +31,5 @@ class ReportJob(Base, TimestampMixin):
     # Relationships
     company: Mapped["Company"] = relationship("Company", back_populates="report_jobs")
     generated_report: Mapped["GeneratedReport | None"] = relationship(
-        "GeneratedReport",
-        back_populates="report_job",
-        uselist=False,
+        "GeneratedReport", back_populates="report_job", uselist=False
     )

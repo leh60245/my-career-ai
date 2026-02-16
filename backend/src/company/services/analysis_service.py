@@ -1,9 +1,9 @@
 import logging
 from typing import Any
 
-from src.company.models.analysis_report import AnalysisReport
-from src.company.repositories.analysis_report_repository import AnalysisReportRepository
-from src.company.repositories.company_repository import CompanyRepository
+from backend.src.company.models.analysis_report import AnalysisReport
+from backend.src.company.repositories.analysis_report_repository import AnalysisReportRepository
+from backend.src.company.repositories.company_repository import CompanyRepository
 
 
 logger = logging.getLogger(__name__)

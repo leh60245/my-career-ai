@@ -4,7 +4,7 @@ target-version = "py311"
 
 # [핵심] 줄 길이를 넉넉하게 160으로 늘립니다.
 # import 경로가 길면 120자도 넘을 수 있어 Formatter가 강제로 줄바꿈을 시도하기 때문입니다.
-line-length = 160
+line-length = 120
 
 # 2. 제외할 폴더
 exclude = [

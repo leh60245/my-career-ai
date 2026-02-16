@@ -2,9 +2,10 @@ from collections.abc import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.common.enums import AnalysisReportStatus
-from src.common.repositories.base_repository import BaseRepository
-from src.company.models.analysis_report import AnalysisReport
+
+from backend.src.common.enums import AnalysisReportStatus
+from backend.src.common.repositories.base_repository import BaseRepository
+from backend.src.company.models.analysis_report import AnalysisReport
 
 
 class AnalysisReportRepository(BaseRepository[AnalysisReport]):
@@ -23,10 +24,7 @@ class AnalysisReportRepository(BaseRepository[AnalysisReport]):
 
     async def get_latest_by_company_id(self, company_id: int) -> AnalysisReport | None:
         stmt = (
-            select(self.model)
-            .where(self.model.company_id == company_id)
-            .order_by(self.model.rcept_dt.desc())
-            .limit(1)
+            select(self.model).where(self.model.company_id == company_id).order_by(self.model.rcept_dt.desc()).limit(1)
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()

@@ -1,8 +1,9 @@
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.company.models.company import Company
-from src.company.repositories.company_repository import CompanyRepository
+
+from backend.src.company.models.company import Company
+from backend.src.company.repositories.company_repository import CompanyRepository
 
 
 logger = logging.getLogger(__name__)
@@ -104,14 +105,7 @@ class CompanyService:
         """회사명으로 단건 조회"""
         return await self.repo.get_by_company_name(company_name)
 
-    async def get_all_companies(
-        self,
-        limit: int = 100,
-        skip: int = 0,
-        order_by: str = "company_name",
-    ) -> list[Company]:
+    async def get_all_companies(self, limit: int = 100, skip: int = 0, order_by: str = "company_name") -> list[Company]:
         """전체 기업 목록 조회 (기본 회사명 오름차순)"""
-        companies = await self.repo.get_all(
-            skip=skip, limit=limit, order_by=order_by, ascending=True
-        )
+        companies = await self.repo.get_all(skip=skip, limit=limit, order_by=order_by, ascending=True)
         return list(companies)

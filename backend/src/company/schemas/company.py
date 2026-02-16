@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CompanyCreate(BaseModel):
@@ -34,15 +34,16 @@ class CompanyCreate(BaseModel):
             raise ValueError("Company name cannot be empty")
         return v
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "company_name": "삼성전자",
                 "corp_code": "005930",
                 "stock_code": "005930",
                 "sector": "Semiconductor",
             }
-        }
+        },
+    )
 
 
 class CompanyUpdate(BaseModel):
@@ -62,9 +63,17 @@ class CompanyUpdate(BaseModel):
     sector: str | None = Field(None, max_length=100, description="Business sector")
     product: str | None = Field(None, max_length=255, description="Main products/services")
 
-    class Config:
-        json_schema_extra = {"example": {"sector": "Electronics"}}
-
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                "company_name": "삼성전자",
+                "corp_code": "005930",
+                "stock_code": "005930",
+                "sector": "Semiconductor",
+            }
+        },
+    )
 
 class CompanyResponse(BaseModel):
     """
@@ -89,10 +98,8 @@ class CompanyResponse(BaseModel):
     updated_at: datetime | None = Field(None, description="Last update timestamp")
     """UTC timestamp of last modification"""
 
-    class Config:
-        from_attributes = True  # Pydantic V2: Allow ORM mode for SQLAlchemy models
-        json_encoders = {datetime: lambda v: v.isoformat() if v else None}
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "id": 1,
                 "company_name": "삼성전자",
@@ -102,7 +109,8 @@ class CompanyResponse(BaseModel):
                 "created_at": "2026-01-15T08:30:00+00:00",
                 "updated_at": "2026-01-21T10:45:30+00:00",
             }
-        }
+        },
+    )
 
 
 __all__ = [

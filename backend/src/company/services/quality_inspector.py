@@ -21,9 +21,11 @@ logger = logging.getLogger(__name__)
 # 1. 품질 검수 기준 (CSV → 구조화 데이터)
 # ──────────────────────────────────────────────────────────────
 
+
 @dataclass
 class SectionCriteria:
     """섹션별 품질 평가 기준"""
+
     section_name: str
     description: str
     criteria_types: list[str]  # 정확성, 최신성, 논리성/효용성
@@ -113,9 +115,11 @@ QUALITY_CRITERIA: list[SectionCriteria] = [
 # 2. 평가 결과 데이터 클래스
 # ──────────────────────────────────────────────────────────────
 
+
 @dataclass
 class SectionGrade:
     """섹션 평가 결과"""
+
     section_name: str
     grade: str  # A, B, C, or N/A
     reason: str
@@ -125,6 +129,7 @@ class SectionGrade:
 @dataclass
 class QualityReport:
     """전체 품질 검수 결과"""
+
     overall_grade: str
     section_grades: list[SectionGrade]
     summary: str
@@ -134,6 +139,7 @@ class QualityReport:
 # ──────────────────────────────────────────────────────────────
 # 3. dspy Signature for LLM Evaluation
 # ──────────────────────────────────────────────────────────────
+
 
 class EvaluateSection(dspy.Signature):
     """당신은 기업분석 리포트의 품질을 검수하는 전문 평가자입니다.
@@ -152,6 +158,7 @@ class EvaluateSection(dspy.Signature):
 # ──────────────────────────────────────────────────────────────
 # 4. 품질 검수 서비스
 # ──────────────────────────────────────────────────────────────
+
 
 class QualityInspector:
     """생성된 리포트를 품질 기준에 따라 LLM으로 평가합니다."""
@@ -178,12 +185,14 @@ class QualityInspector:
             section_content = self._find_matching_section(criteria.section_name, sections)
 
             if not section_content:
-                section_grades.append(SectionGrade(
-                    section_name=criteria.section_name,
-                    grade="N/A",
-                    reason="해당 섹션을 리포트에서 찾을 수 없습니다.",
-                    suggestions=["해당 섹션을 추가하세요."],
-                ))
+                section_grades.append(
+                    SectionGrade(
+                        section_name=criteria.section_name,
+                        grade="N/A",
+                        reason="해당 섹션을 리포트에서 찾을 수 없습니다.",
+                        suggestions=["해당 섹션을 추가하세요."],
+                    )
+                )
                 continue
 
             # LLM 평가 실행
@@ -275,15 +284,11 @@ class QualityInspector:
             if self.lm:
                 with dspy.settings.context(lm=self.lm):
                     result = self.evaluator(
-                        section_name=criteria.section_name,
-                        section_content=truncated_content,
-                        criteria=criteria_text,
+                        section_name=criteria.section_name, section_content=truncated_content, criteria=criteria_text
                     )
             else:
                 result = self.evaluator(
-                    section_name=criteria.section_name,
-                    section_content=truncated_content,
-                    criteria=criteria_text,
+                    section_name=criteria.section_name, section_content=truncated_content, criteria=criteria_text
                 )
 
             return self._parse_evaluation(criteria.section_name, result.evaluation)
@@ -301,7 +306,7 @@ class QualityInspector:
         """LLM 출력을 파싱하여 SectionGrade로 변환합니다."""
         try:
             # JSON 블록 추출
-            json_match = re.search(r'\{[^}]+\}', raw_output, re.DOTALL)
+            json_match = re.search(r"\{[^}]+\}", raw_output, re.DOTALL)
             if json_match:
                 data = json.loads(json_match.group())
                 grade = data.get("grade", "N/A").upper()
@@ -324,12 +329,7 @@ class QualityInspector:
                 grade = g
                 break
 
-        return SectionGrade(
-            section_name=section_name,
-            grade=grade,
-            reason=raw_output[:200],
-            suggestions=[],
-        )
+        return SectionGrade(section_name=section_name, grade=grade, reason=raw_output[:200], suggestions=[])
 
     def _calculate_overall_grade(self, grades: list[SectionGrade]) -> str:
         """섹션별 등급을 종합하여 전체 등급을 산출합니다."""
@@ -370,17 +370,14 @@ class QualityInspector:
         # C등급 섹션 하이라이트
         c_grades = [g for g in evaluated if g.grade == "C"]
         if c_grades:
-            lines.append("\n⚠️ 개선 필요 섹션:")
+            lines.append("\n[WARNING] 개선 필요 섹션:")
             for g in c_grades:
                 lines.append(f"   - {g.section_name}: {g.reason}")
 
         return "\n".join(lines)
 
 
-def evaluate_report_quality(
-    article_text: str,
-    lm: dspy.dsp.LM | None = None,
-) -> dict[str, Any]:
+def evaluate_report_quality(article_text: str, lm: dspy.dsp.LM | None = None) -> dict[str, Any]:
     """
     편의 함수: 리포트 품질을 평가하고 결과를 딕셔너리로 반환합니다.
 
@@ -397,12 +394,7 @@ def evaluate_report_quality(
     return {
         "overall_grade": report.overall_grade,
         "section_grades": [
-            {
-                "section_name": g.section_name,
-                "grade": g.grade,
-                "reason": g.reason,
-                "suggestions": g.suggestions,
-            }
+            {"section_name": g.section_name, "grade": g.grade, "reason": g.reason, "suggestions": g.suggestions}
             for g in report.section_grades
         ],
         "summary": report.summary,

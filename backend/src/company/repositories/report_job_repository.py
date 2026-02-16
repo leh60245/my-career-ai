@@ -2,9 +2,10 @@ from collections.abc import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.common.enums import ReportJobStatus
-from src.common.repositories.base_repository import BaseRepository
-from src.company.models.report_job import ReportJob
+
+from backend.src.common.enums import ReportJobStatus
+from backend.src.common.repositories.base_repository import BaseRepository
+from backend.src.company.models.report_job import ReportJob
 
 
 class ReportJobRepository(BaseRepository[ReportJob]):
@@ -29,7 +30,10 @@ class ReportJobRepository(BaseRepository[ReportJob]):
         from sqlalchemy import func, or_
 
         stmt = select(func.count()).where(
-            or_(self.model.status == ReportJobStatus.PENDING.value, self.model.status == ReportJobStatus.PROCESSING.value)
+            or_(
+                self.model.status == ReportJobStatus.PENDING.value,
+                self.model.status == ReportJobStatus.PROCESSING.value,
+            )
         )
         result = await self.session.execute(stmt)
         return result.scalar() or 0
@@ -51,15 +55,8 @@ class ReportJobRepository(BaseRepository[ReportJob]):
         result = await self.session.execute(stmt)
         return result.scalar() or 0
 
-    async def list_recent(
-        self, *, limit: int = 20, offset: int = 0
-    ) -> Sequence[ReportJob]:
+    async def list_recent(self, *, limit: int = 20, offset: int = 0) -> Sequence[ReportJob]:
         """최신 순으로 Job 목록을 반환합니다."""
-        stmt = (
-            select(self.model)
-            .order_by(self.model.created_at.desc())
-            .offset(offset)
-            .limit(limit)
-        )
+        stmt = select(self.model).order_by(self.model.created_at.desc()).offset(offset).limit(limit)
         result = await self.session.execute(stmt)
         return result.scalars().all()

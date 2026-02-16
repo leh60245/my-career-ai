@@ -13,8 +13,9 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from src.common.enums import AffiliationType, UserRole, UserTier
-from src.common.models.base import Base, TimestampMixin
+
+from backend.src.common.enums import AffiliationType, UserRole, UserTier
+from backend.src.common.models.base import Base, TimestampMixin
 
 
 if TYPE_CHECKING:
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
 # ============================================================
 # Affiliation (소속 마스터)
 # ============================================================
+
 
 class Affiliation(Base, TimestampMixin):
     """
@@ -42,9 +44,7 @@ class Affiliation(Base, TimestampMixin):
         nullable=False,
         comment="소속 유형 (UNIVERSITY, GOVERNMENT, COMPANY, ETC)",
     )
-    domain: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, comment="이메일 도메인 (e.g., snu.ac.kr)"
-    )
+    domain: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="이메일 도메인 (e.g., snu.ac.kr)")
 
     # Relationships
     job_seeker_profiles: Mapped[list["JobSeekerProfile"]] = relationship(
@@ -59,6 +59,7 @@ class Affiliation(Base, TimestampMixin):
 # User (통합 계정)
 # ============================================================
 
+
 class User(Base, TimestampMixin):
     """
     통합 사용자 계정 테이블.
@@ -69,22 +70,16 @@ class User(Base, TimestampMixin):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False, comment="이메일 (로그인 ID)")
+    email: Mapped[str] = mapped_column(
+        String(320), unique=True, index=True, nullable=False, comment="이메일 (로그인 ID)"
+    )
     role: Mapped[UserRole] = mapped_column(
-        Enum(UserRole, name="user_role"),
-        nullable=False,
-        default=UserRole.JOB_SEEKER,
-        comment="사용자 역할",
+        Enum(UserRole, name="user_role"), nullable=False, default=UserRole.JOB_SEEKER, comment="사용자 역할"
     )
     tier: Mapped[UserTier] = mapped_column(
-        Enum(UserTier, name="user_tier"),
-        nullable=False,
-        default=UserTier.FREE,
-        comment="구독 등급",
+        Enum(UserTier, name="user_tier"), nullable=False, default=UserTier.FREE, comment="구독 등급"
     )
-    last_login: Mapped[Any] = mapped_column(
-        DateTime(timezone=True), nullable=True, comment="마지막 로그인 시각"
-    )
+    last_login: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=True, comment="마지막 로그인 시각")
 
     # Relationships (1:1)
     job_seeker_profile: Mapped["JobSeekerProfile | None"] = relationship(
@@ -99,6 +94,7 @@ class User(Base, TimestampMixin):
 # JobSeekerProfile (구직자 상세)
 # ============================================================
 
+
 class JobSeekerProfile(Base, TimestampMixin):
     """
     구직자 상세 프로필.
@@ -109,21 +105,15 @@ class JobSeekerProfile(Base, TimestampMixin):
 
     __tablename__ = "job_seeker_profiles"
 
-    user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     affiliation_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("affiliations.id"), nullable=True, comment="소속 ID (비소속 시 Null)"
     )
-    student_id: Mapped[str | None] = mapped_column(
-        String(50), nullable=True, comment="학번 (해당 시)"
-    )
+    student_id: Mapped[str | None] = mapped_column(String(50), nullable=True, comment="학번 (해당 시)")
     education: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True, comment="학력 정보 (학교, 전공, 상태)"
     )
-    specs: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB, nullable=True, comment="스펙 정보 (어학, 자격증, 경력)"
-    )
+    specs: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True, comment="스펙 정보 (어학, 자격증, 경력)")
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="job_seeker_profile")
@@ -134,6 +124,7 @@ class JobSeekerProfile(Base, TimestampMixin):
 # ManagerProfile (관리자 상세)
 # ============================================================
 
+
 class ManagerProfile(Base, TimestampMixin):
     """
     관리자 상세 프로필.
@@ -143,15 +134,11 @@ class ManagerProfile(Base, TimestampMixin):
 
     __tablename__ = "manager_profiles"
 
-    user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     affiliation_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("affiliations.id"), nullable=False, comment="소속 ID (관리자는 필수)"
     )
-    department: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, comment="부서명"
-    )
+    department: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="부서명")
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="manager_profile")

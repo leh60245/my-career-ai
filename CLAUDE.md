@@ -42,7 +42,7 @@ Stanford STORM 기반의 기업 분석(RAG)과 'Context-Aware Multi-Agent' 논�
 - **Async Only**: DB I/O 및 LLM 호출 시 반드시 `async/await` 사용 (Blocking 코드 금지).
 - **Type Hinting**: 모든 함수 시그니처에 타입 명시 (Pydantic 모델 적극 활용).
 - **Docstring**: Google Style 사용, 한글로 작성.
-- **Import Rule**: 절대 경로 사용 권장 (e.g., `from src.common.database.connection import get_db`).
+- **Import Rule**: 절대 경로 사용 권장 (e.g., `from backend.src.common.database.connection import get_db`).
 - **DDD Principle**: 타 도메인의 모델을 직접 Import 하지 말고, Service 계층을 통해 호출하거나 ID 참조(Loose Coupling)를 지향.
 
 ### JavaScript/React (Frontend)
@@ -78,3 +78,4 @@ Stanford STORM 기반의 기업 분석(RAG)과 'Context-Aware Multi-Agent' 논�
 - **데이터 흐름**: `Resume` 서비스는 `Company` 도메인의 데이터를 참조하지만, `Company` 테이블을 직접 수정하지 않습니다 (Read-Only or Service Call).
 - **확장성**: 사용자(User)는 `Affiliation`을 통해 B2B/B2G(대학, 공공기관)로 확장 가능하도록 설계되었습니다.
 - **AI 원칙**: 자소서 서비스는 '대필'이 아닌 '코칭'에 집중합니다. (Context-Aware Multi-Agent Framework)
+- **주석 및 로그 작성 원칙**: **절대** 이모티콘 사용 금지 (UnicodeDecodeError: 'cp949' codec 문제 발생을 원천 차단)

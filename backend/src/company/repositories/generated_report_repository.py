@@ -1,7 +1,8 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.common.repositories.base_repository import BaseRepository
-from src.company.models.generated_report import GeneratedReport
+
+from backend.src.common.repositories.base_repository import BaseRepository
+from backend.src.company.models.generated_report import GeneratedReport
 
 
 class GeneratedReportRepository(BaseRepository[GeneratedReport]):

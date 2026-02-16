@@ -13,8 +13,8 @@ Backend STORM Service (Job Manager)
 import logging
 from typing import Any
 
-from src.common.database.connection import AsyncDatabaseEngine
-from src.common.enums import ReportJobStatus
+from backend.src.common.database.connection import AsyncDatabaseEngine
+from backend.src.common.enums import ReportJobStatus
 
 from .company_service import CompanyService
 from .report_job_service import ReportJobService
@@ -53,11 +53,7 @@ class StormService:
 
             # Service 계층을 통한 Job 생성
             job_service = ReportJobService.from_session(session)
-            job_id = await job_service.create_job(
-                company_id=company.id,
-                company_name=company_name,
-                topic=topic,
-            )
+            job_id = await job_service.create_job(company_id=company.id, company_name=company_name, topic=topic)
 
         # 메모리 상태 초기화
         JOBS[job_id] = {
@@ -70,13 +66,7 @@ class StormService:
         logger.info(f"🆕 [StormService] Job registered: {job_id} ({company_name})")
         return job_id
 
-    async def run_pipeline(
-        self,
-        job_id: str,
-        company_name: str,
-        topic: str,
-        model_provider: str = "openai",
-    ) -> None:
+    async def run_pipeline(self, job_id: str, company_name: str, topic: str, model_provider: str = "openai") -> None:
         """
         Background Task로 실행됩니다.
         src.company.engine.storm_pipeline에 모든 실행을 위임합니다.
@@ -86,14 +76,10 @@ class StormService:
         try:
             # Lazy import: knowledge_storm + torch 등 무거운 의존성을 서버 시작 시가 아닌
             # 파이프라인 실행 시점에만 로드합니다.
-            from src.company.engine.storm_pipeline import run_storm_pipeline
+            from backend.src.company.engine.storm_pipeline import run_storm_pipeline
 
             await run_storm_pipeline(
-                job_id=job_id,
-                company_name=company_name,
-                topic=topic,
-                jobs_dict=JOBS,
-                model_provider=model_provider,
+                job_id=job_id, company_name=company_name, topic=topic, jobs_dict=JOBS, model_provider=model_provider
             )
         except Exception as e:
             logger.error(f"❌ [StormService] Pipeline failed for {job_id} ({company_name}): {e}")

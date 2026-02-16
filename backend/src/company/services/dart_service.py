@@ -9,7 +9,8 @@ from typing import Any
 import dart_fss as dart
 import pandas as pd
 from bs4 import BeautifulSoup
-from src.common.config import CHUNK_CONFIG, DART_CONFIG, TARGET_SECTIONS
+
+from backend.src.common.config import CHUNK_CONFIG, DART_CONFIG, TARGET_SECTIONS
 
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ class DartService:
     def __init__(self):
         self.api_key = DART_CONFIG.get("api_key")
         if not self.api_key:
-            logger.warning("⚠️ DART_API_KEY is missing.")
+            logger.warning("[WARNING] DART_API_KEY is missing.")
         else:
             dart.set_api_key(api_key=self.api_key)
 
@@ -38,7 +39,7 @@ class DartService:
             logger.info("🔄 Loading DART Corp List (Heavy Operation)...")
             try:
                 self._corp_list = dart.get_corp_list()
-                logger.info(f"✅ Loaded {len(self._corp_list)} corporations.")
+                logger.info(f" Loaded {len(self._corp_list)} corporations.")
             except Exception as e:
                 logger.error(f"Failed to load corp list: {e}")
                 self._corp_list = None
@@ -145,11 +146,7 @@ class DartService:
                 report_type = [report_type]
 
             search_results = dart.search(
-                corp_code=corp_code,
-                bgn_de=bgn_de,
-                end_de=end_de,
-                pblntf_detail_ty=report_type,
-                last_reprt_at="Y",
+                corp_code=corp_code, bgn_de=bgn_de, end_de=end_de, pblntf_detail_ty=report_type, last_reprt_at="Y"
             )
             return search_results[0] if search_results else None
 
@@ -357,11 +354,7 @@ class DartService:
                 return "", {}
             df = dfs[0].fillna("")
 
-            meta = {
-                "rows": len(df),
-                "cols": len(df.columns),
-                "columns": [str(c) for c in df.columns],
-            }
+            meta = {"rows": len(df), "cols": len(df.columns), "columns": [str(c) for c in df.columns]}
             caption = table_element.find("caption")
             if caption:
                 meta["title"] = caption.get_text(strip=True)

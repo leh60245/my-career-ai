@@ -2,8 +2,9 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from src.common.enums import AnalysisReportStatus
-from src.common.models.base import Base, CreatedAtMixin
+
+from backend.src.common.enums import AnalysisReportStatus
+from backend.src.common.models.base import Base, CreatedAtMixin
 
 
 if TYPE_CHECKING:
@@ -33,8 +34,5 @@ class AnalysisReport(Base, CreatedAtMixin):
     # Relationships
     company: Mapped["Company"] = relationship("Company", back_populates="analysis_reports")
     source_materials: Mapped[list["SourceMaterial"]] = relationship(
-        "SourceMaterial",
-        back_populates="analysis_report",
-        lazy="select",
-        cascade="all, delete-orphan",
+        "SourceMaterial", back_populates="analysis_report", lazy="select", cascade="all, delete-orphan"
     )

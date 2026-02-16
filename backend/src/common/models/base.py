@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Any
 
@@ -6,29 +8,25 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
+    """모든 도메인 모델의 최상위 Base 클래스."""
+
+    __abstract__ = True
     type_annotation_map = {}
 
     id: Any
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        모델 객체를 딕셔너리로 변환 (Pydantic 변환이나 로깅에 유용)
-        """
+        """모델 객체를 딕셔너리로 변환합니다."""
         return {c.name: getattr(self, c.name) for c in self.__table__.columns}
 
     def __repr__(self) -> str:
-        """
-        디버깅 시 객체의 주요 정보를 문자열로 반환
-        예: <Company id=1 name='Samsung' ...>
-        """
+        """디버깅용 객체 문자열을 반환합니다."""
         cols = []
         for col in self.__table__.columns:
-            # 임베딩 벡터나 너무 긴 텍스트는 로그 가독성을 해치므로 제외
             if col.name in ["embedding", "content", "raw_text"]:
                 continue
 
             val = getattr(self, col.name)
-            # 날짜나 너무 긴 값은 포맷팅
             if isinstance(val, datetime):
                 val = val.isoformat()
             if isinstance(val, str) and len(val) > 20:
@@ -40,7 +38,7 @@ class Base(DeclarativeBase):
 
 
 class CreatedAtMixin:
-    """생성 시간만 필요한 경우 (예: 로그, 이력 테이블)"""
+    """생성 시각만 필요한 모델용 믹스인."""
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), server_default=func.now(), nullable=False
@@ -48,9 +46,8 @@ class CreatedAtMixin:
 
 
 class TimestampMixin(CreatedAtMixin):
-    """수정 시간도 필요한 경우 (예: 회원, 게시글)"""
+    """생성/수정 시각이 필요한 모델용 믹스인."""
 
-    # CreatedAtMixin을 상속받았으므로 created_at은 자동으로 포함됨
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=func.now(), onupdate=func.now(), server_default=func.now(), nullable=True
+        DateTime(timezone=True), default=func.now(), onupdate=func.now(), server_default=func.now(), nullable=False
     )

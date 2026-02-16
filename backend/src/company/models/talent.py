@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from src.common.models.base import Base, TimestampMixin
+
+from backend.src.common.models.base import Base, TimestampMixin
 
 
 if TYPE_CHECKING:
@@ -30,18 +31,10 @@ class CompanyTalent(Base, TimestampMixin):
     company_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    year: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, comment="기준 연도"
-    )
-    core_values: Mapped[list[str] | None] = mapped_column(
-        JSONB, nullable=True, comment="핵심 가치 리스트 (List[str])"
-    )
-    description: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="인재상 상세 설명"
-    )
-    source_url: Mapped[str | None] = mapped_column(
-        String(2048), nullable=True, comment="출처 URL"
-    )
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="기준 연도")
+    core_values: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True, comment="핵심 가치 리스트 (List[str])")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True, comment="인재상 상세 설명")
+    source_url: Mapped[str | None] = mapped_column(String(2048), nullable=True, comment="출처 URL")
 
     # Relationships
     company: Mapped["Company"] = relationship("Company", back_populates="talents")

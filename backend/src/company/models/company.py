@@ -2,7 +2,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from src.common.models.base import Base, TimestampMixin
+
+from backend.src.common.models.base import Base, TimestampMixin
 
 
 if TYPE_CHECKING:
@@ -11,20 +12,12 @@ if TYPE_CHECKING:
     from .talent import CompanyTalent
 
 
-class Company(
-    Base,
-    TimestampMixin,
-):
+class Company(Base, TimestampMixin):
     __tablename__ = "companies"
 
     # Fields
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    company_name: Mapped[str] = mapped_column(
-        String(255),
-        nullable=False,
-        unique=True,
-        index=True,
-    )
+    company_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
 
     corp_code: Mapped[str] = mapped_column(String(8), nullable=False, unique=True, index=True)  # 고유 번호
     stock_code: Mapped[str | None] = mapped_column(

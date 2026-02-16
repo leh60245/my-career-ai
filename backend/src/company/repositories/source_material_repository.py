@@ -3,10 +3,11 @@ from typing import Any
 
 from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.common.repositories.base_repository import BaseRepository, RepositoryError
-from src.company.models.analysis_report import AnalysisReport
-from src.company.models.company import Company
-from src.company.models.source_material import SourceMaterial
+
+from backend.src.common.repositories.base_repository import BaseRepository, RepositoryError
+from backend.src.company.models.analysis_report import AnalysisReport
+from backend.src.company.models.company import Company
+from backend.src.company.models.source_material import SourceMaterial
 
 
 class SourceMaterialRepository(BaseRepository[SourceMaterial]):
@@ -142,11 +143,7 @@ class SourceMaterialRepository(BaseRepository[SourceMaterial]):
         if not force:
             stmt = stmt.where(self.model.embedding.is_(None))
 
-        stmt = stmt.order_by(
-            self.model.analysis_report_id.asc(),
-            self.model.sequence_order.asc(),
-            self.model.id.asc(),
-        )
+        stmt = stmt.order_by(self.model.analysis_report_id.asc(), self.model.sequence_order.asc(), self.model.id.asc())
 
         if limit:
             stmt = stmt.limit(limit)

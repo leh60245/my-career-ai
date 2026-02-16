@@ -5,16 +5,16 @@ from typing import Any
 import dspy
 import nest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from src.common.config import AI_CONFIG, SERPER_CONFIG, is_blacklisted_url
-from src.common.database.connection import AsyncDatabaseEngine, create_isolated_engine
+
+from backend.src.common.config import AI_CONFIG, SERPER_CONFIG, is_blacklisted_url
+from backend.src.common.database.connection import AsyncDatabaseEngine, create_isolated_engine
 from backend.src.common.services.embedding import Embedding
 from backend.src.common.services.entity_resolver import CompanyEntityResolver
-from src.company.repositories.company_repository import CompanyRepository
-from src.company.repositories.source_material_repository import SourceMaterialRepository
-from src.company.services.llm_query_analyzer import LLMQueryAnalyzer
-from src.company.services.reranker_service import RerankerService
-from src.company.services.source_material_service import SourceMaterialService
-
+from backend.src.company.repositories.company_repository import CompanyRepository
+from backend.src.company.repositories.source_material_repository import SourceMaterialRepository
+from backend.src.company.services.llm_query_analyzer import LLMQueryAnalyzer
+from backend.src.company.services.reranker_service import RerankerService
+from backend.src.company.services.source_material_service import SourceMaterialService
 from knowledge_storm.rm import SerperRM
 
 
@@ -69,16 +69,12 @@ class PostgresRM(dspy.Retrieve):
             local_engine = create_isolated_engine()
 
             # 2. 세션 팩토리 생성
-            async_session_factory = async_sessionmaker(
-                local_engine, expire_on_commit=False
-            )
+            async_session_factory = async_sessionmaker(local_engine, expire_on_commit=False)
             try:
                 async with async_session_factory() as session:
                     repo = SourceMaterialRepository(session)
                     service = SourceMaterialService(
-                        source_material_repo=repo,
-                        embedding=self.embedding,
-                        reranker_service=self.reranker_service
+                        source_material_repo=repo, embedding=self.embedding, reranker_service=self.reranker_service
                     )
                     return await service.search(query_text, company_ids=company_ids, top_k=search_k)
             finally:
@@ -99,7 +95,9 @@ class PostgresRM(dspy.Retrieve):
                     company_name = res.get("_company_name", "")
                     report_title = res.get("_report_title", "")
                     section_path = res.get("_section_path", "")
-                    display_title = " > ".join(filter(None, [company_name, report_title, section_path])) or res.get("title", "No Title")
+                    display_title = " > ".join(filter(None, [company_name, report_title, section_path])) or res.get(
+                        "title", "No Title"
+                    )
 
                     entry = {
                         "snippets": [res.get("content", "")],
@@ -146,12 +144,10 @@ class HybridRM(dspy.Retrieve):
         if SERPER_CONFIG.get("tbs"):
             serper_query_params["tbs"] = SERPER_CONFIG["tbs"]
 
-        self.external_rm = SerperRM(
-            serper_search_api_key=serper_key,
-            k=external_k,
-            query_params=serper_query_params,
+        self.external_rm = SerperRM(serper_search_api_key=serper_key, k=external_k, query_params=serper_query_params)
+        logger.info(
+            f"SerperRM configured: gl={SERPER_CONFIG.get('gl')}, hl={SERPER_CONFIG.get('hl')}, tbs={SERPER_CONFIG.get('tbs')}"
         )
-        logger.info(f"SerperRM configured: gl={SERPER_CONFIG.get('gl')}, hl={SERPER_CONFIG.get('hl')}, tbs={SERPER_CONFIG.get('tbs')}")
 
         # 2. Lazy Initialization
         self.analyzer: LLMQueryAnalyzer | None = None
@@ -175,9 +171,7 @@ class HybridRM(dspy.Retrieve):
             self.resolver = CompanyEntityResolver()
 
             local_engine = create_isolated_engine()
-            async_session_factory = async_sessionmaker(
-                local_engine, expire_on_commit=False
-            )
+            async_session_factory = async_sessionmaker(local_engine, expire_on_commit=False)
 
             try:
                 async with async_session_factory() as session:

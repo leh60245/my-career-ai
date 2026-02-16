@@ -2,8 +2,9 @@ import inspect
 import logging
 
 from openai import AsyncOpenAI
-from src.common.config import AI_CONFIG
-from src.company.schemas.llm_query_analysis_result import LLMQueryAnalysisResult
+
+from backend.src.common.config import AI_CONFIG
+from backend.src.company.schemas.llm_query_analysis_result import LLMQueryAnalysisResult
 
 
 logger = logging.getLogger(__name__)

@@ -72,11 +72,11 @@ class OpenAIEmbedder(BaseEmbedder):
             self._dimension = EMBEDDING_CONFIG["dimension"]
 
         if not self.api_key:
-            logger.warning("⚠️ OPENAI_API_KEY is missing. Embeddings will fail.")
+            logger.warning("[WARNING] OPENAI_API_KEY is missing. Embeddings will fail.")
             self.client = None
         else:
             self.client = AsyncOpenAI(api_key=self.api_key)
-            logger.info(f"✅ OpenAI Async Embedder initialized: {self.model_name}")
+            logger.info(f" OpenAI Async Embedder initialized: {self.model_name}")
 
     def get_dimension(self) -> int:
         return self._dimension
@@ -117,7 +117,9 @@ class HuggingFaceEmbedder(BaseEmbedder):
     """
 
     def __init__(self, model_name: str | None = None, device: str | None = None, batch_size: int | None = None):
-        self.model_name = model_name or EMBEDDING_CONFIG.get("hf_model", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
+        self.model_name = model_name or EMBEDDING_CONFIG.get(
+            "hf_model", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+        )
         self.batch_size = batch_size or EMBEDDING_CONFIG.get("batch_size", 32)
         self.device = device or get_optimal_device()
 
@@ -132,7 +134,7 @@ class HuggingFaceEmbedder(BaseEmbedder):
         self.model.eval()
 
         self._dimension = self.model.config.hidden_size
-        logger.info(f"✅ HuggingFace Model loaded (dim: {self._dimension})")
+        logger.info(f" HuggingFace Model loaded (dim: {self._dimension})")
 
     def get_dimension(self) -> int:
         return self._dimension

@@ -1,10 +1,10 @@
 import logging
 from collections.abc import Sequence
 
-from src.common.services.embedding import Embedding
-from src.company.models.source_material import SourceMaterial
-from src.company.repositories.source_material_repository import SourceMaterialRepository
-from src.company.schemas.search import SearchResult
+from backend.src.common.services.embedding import Embedding
+from backend.src.company.models.source_material import SourceMaterial
+from backend.src.company.repositories.source_material_repository import SourceMaterialRepository
+from backend.src.company.schemas.search import SearchResult
 
 from .reranker_service import RerankerService
 
@@ -18,21 +18,14 @@ class SourceMaterialService:
     """
 
     def __init__(
-        self,
-        source_material_repo: SourceMaterialRepository,
-        embedding: Embedding,
-        reranker_service: RerankerService,
+        self, source_material_repo: SourceMaterialRepository, embedding: Embedding, reranker_service: RerankerService
     ) -> None:
         self.repo = source_material_repo
         self.embedding = embedding
         self.reranker = reranker_service
 
     async def search(
-        self,
-        query: str,
-        company_ids: list[int] | None = None,
-        top_k: int = 10,
-        enable_rerank: bool = True,
+        self, query: str, company_ids: list[int] | None = None, top_k: int = 10, enable_rerank: bool = True
     ) -> Sequence[SearchResult]:
 
         # 1. 임베딩

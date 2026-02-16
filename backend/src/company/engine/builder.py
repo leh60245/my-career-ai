@@ -1,8 +1,7 @@
 import logging
 import os
 
-from src.common.config import AI_CONFIG
-
+from backend.src.common.config import AI_CONFIG
 from knowledge_storm import STORMWikiLMConfigs
 from knowledge_storm.lm import AzureOpenAIModel, GoogleModel, OpenAIModel
 

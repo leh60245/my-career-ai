@@ -2,8 +2,9 @@ import logging
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.company.models.generated_report import GeneratedReport
-from src.company.repositories.generated_report_repository import GeneratedReportRepository
+
+from backend.src.company.models.generated_report import GeneratedReport
+from backend.src.company.repositories.generated_report_repository import GeneratedReportRepository
 
 
 logger = logging.getLogger(__name__)

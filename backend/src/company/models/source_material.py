@@ -3,7 +3,8 @@ from typing import TYPE_CHECKING, Any
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from src.common.models.base import Base, CreatedAtMixin
+
+from backend.src.common.models.base import Base, CreatedAtMixin
 
 
 if TYPE_CHECKING:

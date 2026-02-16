@@ -3,9 +3,9 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-from src.common.services.embedding import Embedding
-from src.company.models.source_material import SourceMaterial
-from src.company.repositories.source_material_repository import SourceMaterialRepository
+from backend.src.common.services.embedding import Embedding
+from backend.src.company.models.source_material import SourceMaterial
+from backend.src.company.repositories.source_material_repository import SourceMaterialRepository
 
 
 logger = logging.getLogger(__name__)

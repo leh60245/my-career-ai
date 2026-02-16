@@ -9,9 +9,10 @@ import logging
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.company.repositories.company_repository import CompanyRepository
-from src.company.repositories.generated_report_repository import GeneratedReportRepository
-from src.company.services.generated_report_service import GeneratedReportService
+
+from backend.src.company.repositories.company_repository import CompanyRepository
+from backend.src.company.repositories.generated_report_repository import GeneratedReportRepository
+from backend.src.company.services.generated_report_service import GeneratedReportService
 
 from .io import find_topic_directory, load_storm_output_files
 
@@ -53,10 +54,7 @@ async def save_storm_result_to_db(
 
     # 2. 메타데이터 확장
     final_meta = meta_info.copy()
-    final_meta.update({
-        "file_path": topic_dir,
-        "run_config": data.get("run_config", {}),
-    })
+    final_meta.update({"file_path": topic_dir, "run_config": data.get("run_config", {})})
 
     # 3. 서비스 조립 (On-Demand Injection)
     comp_repo = CompanyRepository(session)
@@ -143,7 +141,7 @@ async def save_storm_result_from_memory(
             references_data=references_data,
         )
 
-        logger.info(f"[{job_id}] ✅ Report saved from memory: ID {report.id}")
+        logger.info(f"[{job_id}]  Report saved from memory: ID {report.id}")
         return report.id
 
     except Exception as e:

@@ -18,7 +18,7 @@ Modular Monolith: FastAPI backend + React frontend. Three domains under `backend
 - **Async only** — all DB I/O and LLM calls must use `async/await`. No blocking code.
 - **SQLAlchemy 2.0 mapped style** — `Mapped[T]` + `mapped_column()`. Models inherit `Base` from `src.common.models.base`.
 - **Mixins**: Use `TimestampMixin` (created_at + updated_at) or `CreatedAtMixin` (created_at only).
-- **Imports**: Absolute paths required (`from src.common.database.connection import get_db`).
+- **Imports**: Absolute paths required (`from backend.src.common.database.connection import get_db`).
 - **Cross-domain**: Never import another domain's models directly. Use service calls or ID references.
 - **Type hints**: Required on all function signatures. Use Pydantic V2 models (with `from_attributes = True`).
 - **Docstrings**: Google Style, written in Korean.

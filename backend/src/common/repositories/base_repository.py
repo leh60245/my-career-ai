@@ -6,7 +6,8 @@ from typing import Any, Generic, TypeVar
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.common.models.base import Base
+
+from backend.src.common.models.base import Base
 
 
 logger = logging.getLogger(__name__)
@@ -60,11 +61,7 @@ class BaseRepository(ABC, Generic[T]):
             raise RepositoryError(f"Failed to get entity: {e}") from e
 
     async def get_all(
-        self,
-        skip: int = 0,
-        limit: int = 100,
-        order_by: str | None = None,
-        ascending: bool = True,
+        self, skip: int = 0, limit: int = 100, order_by: str | None = None, ascending: bool = True
     ) -> Sequence[T]:
         stmt = select(self.model)
 

@@ -4,8 +4,9 @@ from collections.abc import Sequence
 
 import torch
 from sentence_transformers import CrossEncoder
-from src.common.config import AI_CONFIG
-from src.company.schemas.search import SearchResult
+
+from backend.src.common.config import AI_CONFIG
+from backend.src.company.schemas.search import SearchResult
 
 
 logger = logging.getLogger(__name__)
@@ -20,12 +21,8 @@ class RerankerService:
         logger.info(f"🔄 Loading Reranker model: {self.model_name} on {self.device}")
 
         # [설정] max_length 명시 (BGE-M3는 보통 8192까지 가능하지만, 메모리/속도를 위해 512~1024 권장)
-        self.model = CrossEncoder(
-            model_name_or_path=self.model_name,
-            device=self.device,
-            max_length=self.max_length,
-        )
-        logger.info("✅ Reranker model loaded.")
+        self.model = CrossEncoder(model_name_or_path=self.model_name, device=self.device, max_length=self.max_length)
+        logger.info(" Reranker model loaded.")
 
     def _get_optimal_device(self) -> str:
         forced_device = AI_CONFIG.get("reranker_device")

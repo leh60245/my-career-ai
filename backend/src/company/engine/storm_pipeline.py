@@ -4,14 +4,13 @@ import os
 import re
 import traceback
 
-from src.common.config import AI_CONFIG
-from src.common.database.connection import AsyncDatabaseEngine
-from src.common.enums import ReportJobStatus
-from src.company.repositories.company_repository import CompanyRepository
-from src.company.repositories.report_job_repository import ReportJobRepository
-from src.company.services.quality_inspector import evaluate_report_quality
-from src.company.services.report_job_service import ReportJobService
-
+from backend.src.common.config import AI_CONFIG
+from backend.src.common.database.connection import AsyncDatabaseEngine
+from backend.src.common.enums import ReportJobStatus
+from backend.src.company.repositories.company_repository import CompanyRepository
+from backend.src.company.repositories.report_job_repository import ReportJobRepository
+from backend.src.company.services.quality_inspector import evaluate_report_quality
+from backend.src.company.services.report_job_service import ReportJobService
 from knowledge_storm import STORMWikiRunner, STORMWikiRunnerArguments
 
 from .adapter import save_storm_result_to_db
@@ -21,11 +20,12 @@ from .io import create_run_directory, find_topic_directory, write_run_metadata
 
 logger = logging.getLogger(__name__)
 
+
 async def run_storm_pipeline(
     job_id: str,
     company_name: str,
     topic: str,
-    jobs_dict: dict, # 메모리 기반 상태 관리 (Optional)
+    jobs_dict: dict,  # 메모리 기반 상태 관리 (Optional)
     model_provider: str = "openai",
 ):
     logger.info(f"[{job_id}] 🚀 Starting STORM Pipeline for {company_name}")
@@ -93,6 +93,7 @@ async def run_storm_pipeline(
         # 3. Blocking Run (스레드에서 실행하여 FastAPI 블로킹 방지)
         logger.info(f"[{job_id}] Running STORM core...")
         from datetime import date
+
         today_str = date.today().strftime("%Y-%m-%d")
         full_topic = f"{company_name} {topic} (기준일: {today_str})"
         # Windows 파일 시스템에서 허용되지 않는 문자 제거
@@ -105,13 +106,16 @@ async def run_storm_pipeline(
         write_run_metadata(output_dir, {"job_id": job_id, "topic": topic})
 
         # 실제 실행 (CPU Bound)
-        await loop.run_in_executor(None, lambda: runner.run(
-            topic=safe_topic,
-            do_research=True,
-            do_generate_outline=True,
-            do_generate_article=True,
-            do_polish_article=True
-        ))
+        await loop.run_in_executor(
+            None,
+            lambda: runner.run(
+                topic=safe_topic,
+                do_research=True,
+                do_generate_outline=True,
+                do_generate_article=True,
+                do_polish_article=True,
+            ),
+        )
 
         # 마무리 작업
         runner.post_run()
@@ -156,10 +160,7 @@ async def run_storm_pipeline(
                 topic=topic,
                 output_dir=output_dir,
                 model_name=model_provider,
-                meta_info={
-                    "job_id": job_id,
-                    "quality": quality_result,
-                }
+                meta_info={"job_id": job_id, "quality": quality_result},
             )
             if report_id is None:
                 raise RuntimeError(f"Report DB 저장 실패: output_dir={output_dir}")

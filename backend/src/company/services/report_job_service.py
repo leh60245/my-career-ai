@@ -3,9 +3,10 @@ import uuid
 from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.common.enums import ReportJobStatus
-from src.company.models.report_job import ReportJob
-from src.company.repositories.report_job_repository import ReportJobRepository
+
+from backend.src.common.enums import ReportJobStatus
+from backend.src.company.models.report_job import ReportJob
+from backend.src.company.repositories.report_job_repository import ReportJobRepository
 
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ class ReportJobService:
             "topic": topic,
             "status": ReportJobStatus.PENDING,
             # created_at은 TimestampMixin이 자동 설정 (server_default=func.now())
-            "error_message": None
+            "error_message": None,
         }
 
         await self.repository.create(job_data)
@@ -56,10 +57,10 @@ class ReportJobService:
             job_id,
             {
                 "status": ReportJobStatus.COMPLETED,
-                "error_message": None # 성공했으니 에러 메시지는 클리어 (선택사항)
-            }
+                "error_message": None,  # 성공했으니 에러 메시지는 클리어 (선택사항)
+            },
         )
-        logger.info(f"✅ Job Completed: {job_id}")
+        logger.info(f" Job Completed: {job_id}")
 
     async def fail_job(self, job_id: str, error_message: str) -> None:
         """
@@ -68,13 +69,7 @@ class ReportJobService:
         # 에러 메시지가 너무 길면 DB 컬럼 제한에 걸릴 수 있으므로 안전하게 자름 (예: 2000자)
         safe_message = error_message[:2000] if error_message else "Unknown Error"
 
-        await self.repository.update(
-            job_id,
-            {
-                "status": ReportJobStatus.FAILED,
-                "error_message": safe_message
-            }
-        )
+        await self.repository.update(job_id, {"status": ReportJobStatus.FAILED, "error_message": safe_message})
         logger.error(f"❌ Job Failed: {job_id} - {safe_message}")
 
     async def get_job(self, job_id: str) -> ReportJob | None:
@@ -89,9 +84,7 @@ class ReportJobService:
         """실패한 모든 작업 조회"""
         return await self.repository.get_failed_jobs()
 
-    async def list_jobs(
-        self, *, limit: int = 20, offset: int = 0
-    ) -> tuple[int, list[ReportJob]]:
+    async def list_jobs(self, *, limit: int = 20, offset: int = 0) -> tuple[int, list[ReportJob]]:
         """
         최신 순으로 작업 목록을 조회합니다.
         Returns: (전체 건수, 페이지 결과)
