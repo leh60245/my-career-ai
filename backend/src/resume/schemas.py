@@ -141,6 +141,7 @@ class GuideResponse(BaseModel):
     material_guide: str = Field(..., description="소재 선정 가이드")
     writing_points: str = Field(..., description="작성 포인트 (STAR 기법 등)")
     cautions: str = Field(..., description="주의사항")
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================
@@ -160,9 +161,8 @@ class CorrectionResponse(BaseModel):
         ..., description="3-Point 피드백 [{category, issue, suggestion}, ...]"
     )
     revised_content: str = Field(..., description="수정된 완성본")
-    score: dict[str, int] = Field(
-        ..., description="항목별 점수 (logic, job_fit, expression, structure)"
-    )
+    score: dict[str, int] = Field(..., description="항목별 점수 (logic, job_fit, expression, structure)")
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================
@@ -180,3 +180,4 @@ class DraftHistoryResponse(BaseModel):
 
     item_id: int
     history: list[DraftHistoryItem] = Field(default_factory=list)
+    model_config = ConfigDict(from_attributes=True)

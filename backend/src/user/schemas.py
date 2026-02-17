@@ -60,6 +60,7 @@ class UserMeResponse(BaseModel):
 
     user: UserResponse
     job_seeker_profile: JobSeekerProfileResponse | None = None
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================

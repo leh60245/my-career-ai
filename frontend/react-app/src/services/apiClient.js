@@ -57,9 +57,21 @@ export const fetchTopics = async () => {
     return data;
 };
 
-/** GET /api/company/trending */
+/** GET /api/company/trending - 최근 분석된 기업 목록 (DB 조회) */
 export const fetchTrendingCompanies = async () => {
     const { data } = await apiClient.get('/api/company/trending');
+    return data;
+};
+
+/** GET /api/company/search?query={name} - 기업명 검색 */
+export const searchCompanies = async (query) => {
+    const { data } = await apiClient.get('/api/company/search', { params: { query } });
+    return data;
+};
+
+/** GET /api/reports/company/{company_name} - 특정 기업의 모든 리포트 */
+export const fetchReportsByCompany = async (companyName) => {
+    const { data } = await apiClient.get(`/api/reports/company/${encodeURIComponent(companyName)}`);
     return data;
 };
 
@@ -75,6 +87,12 @@ export const generateReport = async (companyName, topic) => {
 /** GET /api/status/{job_id} */
 export const getJobStatus = async (jobId) => {
     const { data } = await apiClient.get(`/api/status/${jobId}`);
+    return data;
+};
+
+/** GET /api/report/{report_id} (PK) */
+export const getReport = async (reportId) => {
+    const { data } = await apiClient.get(`/api/report/${reportId}`);
     return data;
 };
 

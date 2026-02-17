@@ -45,3 +45,4 @@ class ReportSummary(BaseModel):
 class ReportListResponse(BaseModel):
     total: int
     reports: list[ReportSummary]
+    model_config = ConfigDict(from_attributes=True)

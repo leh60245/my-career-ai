@@ -109,3 +109,10 @@ class CompanyService:
         """전체 기업 목록 조회 (기본 회사명 오름차순)"""
         companies = await self.repo.get_all(skip=skip, limit=limit, order_by=order_by, ascending=True)
         return list(companies)
+
+    async def search_by_name(self, query: str, limit: int = 10) -> list[Company]:
+        """기업명 부분 일치 검색"""
+        companies = await self.repo.search_by_company_name(query, limit=limit)
+        if not companies:
+            return []
+        return list(companies)

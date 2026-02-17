@@ -10,12 +10,7 @@ class CompanyCreate(BaseModel):
     POST /api/companies
     """
 
-    company_name: str = Field(
-        ...,
-        min_length=1,
-        max_length=255,
-        description="Official company name (required)",
-    )
+    company_name: str = Field(..., min_length=1, max_length=255, description="Official company name (required)")
 
     corp_code: str | None = Field(None, max_length=20, description="6-digit DART corporation code")
 
@@ -42,7 +37,7 @@ class CompanyCreate(BaseModel):
                 "stock_code": "005930",
                 "sector": "Semiconductor",
             }
-        },
+        }
     )
 
 
@@ -75,6 +70,7 @@ class CompanyUpdate(BaseModel):
         },
     )
 
+
 class CompanyResponse(BaseModel):
     """
     Response schema for company API endpoints.
@@ -99,6 +95,7 @@ class CompanyResponse(BaseModel):
     """UTC timestamp of last modification"""
 
     model_config = ConfigDict(
+        from_attributes=True,
         json_schema_extra={
             "example": {
                 "id": 1,
@@ -113,8 +110,4 @@ class CompanyResponse(BaseModel):
     )
 
 
-__all__ = [
-    "CompanyCreate",
-    "CompanyUpdate",
-    "CompanyResponse",
-]
+__all__ = ["CompanyCreate", "CompanyUpdate", "CompanyResponse"]

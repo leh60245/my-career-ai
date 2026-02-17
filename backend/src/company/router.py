@@ -14,7 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.src.common.config import TOPICS
 from backend.src.common.database.connection import AsyncDatabaseEngine
 from backend.src.company.schemas.company import CompanyResponse
-from backend.src.company.schemas.generated_report import GeneratedReportResponse, GenerateReportRequest
+from backend.src.company.schemas.generated_report import (
+    GeneratedReportListItem,
+    GeneratedReportResponse,
+    GenerateReportRequest,
+)
 from backend.src.company.schemas.report_job import ReportJobResponse, ReportListResponse, ReportSummary
 from backend.src.company.services.company_service import CompanyService
 from backend.src.company.services.generated_report_service import GeneratedReportService
@@ -71,33 +75,49 @@ async def get_topics() -> list[dict]:
     return [{"id": t["id"], "label": t["label"]} for t in TOPICS]
 
 
-@router.get("/company/trending")
-async def get_trending_companies() -> dict:
+@router.get("/company/trending", response_model=list[CompanyResponse])
+async def get_trending_companies(service: CompanyService = Depends(get_company_service)) -> list[CompanyResponse]:
     """
-    추천 기업 리스트를 반환한다 (MVP: 하드코딩).
+    최근 분석된(업데이트된) 기업 최대 9개를 반환한다.
 
-    유니콘, 대기업, 스타트업 세 카테고리로 구분된 추천 기업 목록을 반환한다.
+    DB의 companies 테이블에서 updated_at 기준 내림차순으로 조회한다.
     """
-    return {
-        "unicorns": [
-            {"id": 1, "name": "토스 (비바리퍼블리카)", "industry": "핀테크", "logo_url": None},
-            {"id": 2, "name": "야놀자", "industry": "여행/숙박 플랫폼", "logo_url": None},
-            {"id": 3, "name": "마켓컬리 (컬리)", "industry": "이커머스", "logo_url": None},
-            {"id": 4, "name": "당근마켓", "industry": "지역 커뮤니티", "logo_url": None},
-        ],
-        "public_corps": [
-            {"id": 5, "name": "삼성전자", "industry": "반도체/전자", "logo_url": None},
-            {"id": 6, "name": "SK하이닉스", "industry": "반도체", "logo_url": None},
-            {"id": 7, "name": "NAVER", "industry": "IT/포털", "logo_url": None},
-            {"id": 8, "name": "카카오", "industry": "IT/플랫폼", "logo_url": None},
-        ],
-        "startups": [
-            {"id": 9, "name": "래블업", "industry": "AI 인프라", "logo_url": None},
-            {"id": 10, "name": "리턴제로", "industry": "음성 AI", "logo_url": None},
-            {"id": 11, "name": "뤼이드", "industry": "에듀테크 AI", "logo_url": None},
-            {"id": 12, "name": "채널톡 (채널코퍼레이션)", "industry": "CS SaaS", "logo_url": None},
-        ],
-    }
+    companies = await service.get_all_companies(limit=9, skip=0, order_by="updated_at")
+    # updated_at 내림차순 정렬 (서비스 레이어가 ascending=True 기본이므로 역순)
+    companies_sorted = sorted(companies, key=lambda c: c.updated_at or c.created_at, reverse=True)
+    return [CompanyResponse.model_validate(c) for c in companies_sorted]
+
+
+@router.get("/company/search", response_model=list[CompanyResponse])
+async def search_companies(query: str, service: CompanyService = Depends(get_company_service)) -> list[CompanyResponse]:
+    """
+    기업명 부분 일치 검색.
+
+    Args:
+        query: 검색어 (기업명의 일부)
+
+    Returns:
+        매칭된 기업 목록 (최대 10개)
+    """
+    companies = await service.search_by_name(query)
+    return [CompanyResponse.model_validate(c) for c in companies]
+
+
+@router.get("/reports/company/{company_name}", response_model=list[GeneratedReportListItem])
+async def get_reports_by_company(
+    company_name: str, service: GeneratedReportService = Depends(get_generated_report_service)
+) -> list[GeneratedReportListItem]:
+    """
+    특정 기업의 모든 생성 리포트를 조회한다.
+
+    Args:
+        company_name: 기업명
+
+    Returns:
+        해당 기업의 생성 리포트 목록 (최신순)
+    """
+    reports = await service.get_reports_by_company_name(company_name)
+    return [GeneratedReportListItem.model_validate(r) for r in reports]
 
 
 # ============================================================

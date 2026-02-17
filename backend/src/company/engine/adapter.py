@@ -125,11 +125,6 @@ async def save_storm_result_from_memory(
             logger.error(f"[{job_id}] Company '{company_name}' not found in DB.")
             return None
 
-        # conversation_log가 list인 경우 dict로 래핑 (JSON 컬럼 호환)
-        conv_log = conversation_log
-        if isinstance(conversation_log, list):
-            conv_log = {"conversations": conversation_log}
-
         report = await report_service.create_report(
             job_id=job_id,
             company_name=company_name,
@@ -139,6 +134,7 @@ async def save_storm_result_from_memory(
             meta_info=meta_info,
             toc_text=toc_text,
             references_data=references_data,
+            conversation_log=conversation_log,
         )
 
         logger.info(f"[{job_id}]  Report saved from memory: ID {report.id}")

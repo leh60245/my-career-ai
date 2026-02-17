@@ -1,5 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -14,18 +17,36 @@ import {
   ListItemButton,
   ListItemText,
   Paper,
+  Stack,
   Tab,
   Tabs,
   Tooltip,
   Typography,
+  alpha,
 } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import MenuIcon from '@mui/icons-material/Menu';
 import DownloadIcon from '@mui/icons-material/Download';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import BusinessIcon from '@mui/icons-material/Business';
+import ArticleIcon from '@mui/icons-material/Article';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { getJobStatus, getReport, getReportByJobId } from '../services/apiService';
+import { getJobStatus, getReport, getReportByJobId, fetchReportsByCompany } from '../services/apiClient';
 import '../styles/ReportViewer.css';
+
+/**
+ * ORDERED_TOPICS - config.py TOPICS 순서와 일치하는 토픽 표시 순서
+ * '직접 입력(custom)'은 제외
+ */
+const ORDERED_TOPICS = [
+  '기업 개요 및 주요 사업 내용',
+  '최근 3개년 재무제표 및 재무 상태 분석',
+  '산업 내 경쟁 우위 및 경쟁사 비교 (SWOT)',
+  '주요 제품 및 서비스 시장 점유율 분석',
+  'R&D 투자 현황 및 기술 경쟁력',
+  'ESG (환경, 사회, 지배구조) 평가',
+];
 
 /**
  * ReportViewer v2 — demo_light 기능 포팅
@@ -419,11 +440,102 @@ const ConversationLogViewer = ({ conversationLog }) => {
   );
 };
 
+// ── Utility: extract text from React children ──
+function extractTextFromChildren(children) {
+  if (typeof children === 'string') return children;
+  if (Array.isArray(children)) return children.map(extractTextFromChildren).join('');
+  if (children?.props?.children) return extractTextFromChildren(children.props.children);
+  return String(children || '');
+}
+
+function toAnchor(text) {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s가-힣-]/g, '')
+    .replace(/\s+/g, '-');
+}
+
+/** 공유 Markdown 렌더링 컴포넌트 설정 */
+const markdownComponents = {
+  h1: ({ children, ...props }) => {
+    const text = extractTextFromChildren(children);
+    const id = toAnchor(text);
+    return <Typography id={id} variant="h3" component="h1" sx={{ mt: 3, mb: 2, fontWeight: 'bold' }} {...props}>{children}</Typography>;
+  },
+  h2: ({ children, ...props }) => {
+    const text = extractTextFromChildren(children);
+    const id = toAnchor(text);
+    return <Typography id={id} variant="h5" component="h2" sx={{ mt: 2.5, mb: 1.5, fontWeight: 'bold' }} {...props}>{children}</Typography>;
+  },
+  h3: ({ children, ...props }) => {
+    const text = extractTextFromChildren(children);
+    const id = toAnchor(text);
+    return <Typography id={id} variant="h6" component="h3" sx={{ mt: 2, mb: 1, fontWeight: 'bold' }} {...props}>{children}</Typography>;
+  },
+  p: ({ ...props }) => <Typography variant="body1" sx={{ mb: 1.5, lineHeight: 1.7 }} {...props} />,
+  ul: ({ ...props }) => <Box component="ul" sx={{ ml: 2, mb: 1.5 }} {...props} />,
+  ol: ({ ...props }) => <Box component="ol" sx={{ ml: 2, mb: 1.5 }} {...props} />,
+  li: ({ ...props }) => <Box component="li" sx={{ mb: 0.5, lineHeight: 1.6 }} {...props} />,
+  table: ({ ...props }) => (
+    <Box sx={{ overflowX: 'auto', mb: 2, border: '1px solid #ddd', borderRadius: '4px' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' }} {...props} />
+    </Box>
+  ),
+  thead: ({ ...props }) => <thead style={{ backgroundColor: '#f0f0f0' }} {...props} />,
+  th: ({ ...props }) => <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #ddd', fontWeight: 'bold' }} {...props} />,
+  td: ({ ...props }) => <td style={{ padding: '10px 12px', borderBottom: '1px solid #eee' }} {...props} />,
+  code: ({ inline, ...props }) =>
+    inline
+      ? <code style={{ backgroundColor: '#f5f5f5', padding: '2px 6px', borderRadius: '3px', fontFamily: 'monospace' }} {...props} />
+      : <pre style={{ backgroundColor: '#f5f5f5', padding: '12px', borderRadius: '4px', overflowX: 'auto', marginBottom: '1.5rem' }}><code {...props} /></pre>,
+  blockquote: ({ ...props }) => (
+    <Box component="blockquote" sx={{ borderLeft: '4px solid #1976d2', pl: 2, ml: 0, my: 2, fontStyle: 'italic', color: 'text.secondary' }} {...props} />
+  ),
+  a: ({ href, children, ...props }) => {
+    const childText = extractTextFromChildren(children);
+    const isCitation = /^\[\d+\]$/.test(childText);
+    if (isCitation) {
+      return (
+        <Tooltip title={href || ''} arrow>
+          <Typography
+            component="a" href={href} target="_blank" rel="noopener noreferrer"
+            sx={{ color: '#1976d2', fontWeight: 'bold', fontSize: '0.8em', verticalAlign: 'super', textDecoration: 'none', cursor: 'pointer', '&:hover': { textDecoration: 'underline', color: '#1565c0' } }}
+            {...props}
+          >
+            {children}
+          </Typography>
+        </Tooltip>
+      );
+    }
+    return (
+      <Typography
+        component="a" href={href} target="_blank" rel="noopener noreferrer"
+        sx={{ color: '#1976d2', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+        {...props}
+      >
+        {children}
+      </Typography>
+    );
+  },
+};
+
 // ════════════════════════════════════════════════════════════
 // Main Component
 // ════════════════════════════════════════════════════════════
 
-const ReportViewer = ({ jobId, initialStatus, onBack }) => {
+const ReportViewer = ({ jobId, companyName, initialStatus, onBack }) => {
+  // ─── Determine mode ──────────────────────────────
+  // accordion mode: companyName is provided (no jobId)
+  // single mode: jobId is provided
+  const isAccordionMode = Boolean(companyName) && !jobId;
+
+  // ─── Accordion Mode State ─────────────────────────
+  const [accordionReports, setAccordionReports] = useState([]);
+  const [accordionLoading, setAccordionLoading] = useState(false);
+  const [accordionError, setAccordionError] = useState(null);
+  const [expandedTopic, setExpandedTopic] = useState(null);
+
+  // ─── Single Mode State ────────────────────────────
   const deriveInitialPhase = () => {
     const s = (initialStatus || '').toUpperCase();
     if (s === 'COMPLETED') return 'loading';
@@ -502,6 +614,47 @@ const ReportViewer = ({ jobId, initialStatus, onBack }) => {
     return () => { cancelled = true; };
   }, [phase, statusInfo, jobId]);
 
+  // ─── Accordion Mode: Fetch all reports ──────────
+  useEffect(() => {
+    if (!isAccordionMode || !companyName) return;
+    let cancelled = false;
+
+    const loadCompanyReports = async () => {
+      setAccordionLoading(true);
+      setAccordionError(null);
+      try {
+        const reports = await fetchReportsByCompany(companyName);
+        if (cancelled) return;
+        // Sort by ORDERED_TOPICS
+        const sorted = sortByTopicOrder(reports || []);
+        setAccordionReports(sorted);
+        // Default expand first topic
+        if (sorted.length > 0) {
+          setExpandedTopic(sorted[0].topic);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setAccordionError('리포트를 불러올 수 없습니다.');
+      } finally {
+        if (!cancelled) setAccordionLoading(false);
+      }
+    };
+
+    loadCompanyReports();
+    return () => { cancelled = true; };
+  }, [isAccordionMode, companyName]);
+
+  /** ORDERED_TOPICS 순서에 따라 리포트 정렬 */
+  const sortByTopicOrder = useCallback((reports) => {
+    return [...reports].sort((a, b) => {
+      const idxA = ORDERED_TOPICS.findIndex((t) => a.topic?.includes(t) || t.includes(a.topic));
+      const idxB = ORDERED_TOPICS.findIndex((t) => b.topic?.includes(t) || t.includes(b.topic));
+      const orderA = idxA >= 0 ? idxA : ORDERED_TOPICS.length;
+      const orderB = idxB >= 0 ? idxB : ORDERED_TOPICS.length;
+      return orderA - orderB;
+    });
+  }, []);
+
   // ─── Derived data ─────────────────────────────
   const citationDict = useMemo(() => (report ? buildCitationDict(report.references_data) : {}), [report]);
   const processedContent = useMemo(() => (report ? addInlineCitationLinks(report.report_content, report.references_data) : ''), [report]);
@@ -519,6 +672,189 @@ const ReportViewer = ({ jobId, initialStatus, onBack }) => {
   const progress = statusInfo?.progress ?? 0;
   const message = statusInfo?.message || '';
   const statusLabel = { PENDING: '대기 중', PROCESSING: '처리 중', COMPLETED: '완료', FAILED: '실패' };
+
+  // ════════════════════════════════════════════════
+  // Render: Accordion Mode (Company Overview)
+  // ════════════════════════════════════════════════
+  if (isAccordionMode) {
+    if (accordionLoading) {
+      return (
+        <Container maxWidth="lg" sx={{ py: 4 }}>
+          <Paper elevation={3} sx={{ p: 4, textAlign: 'center' }}>
+            <CircularProgress size={50} />
+            <Typography variant="body1" sx={{ mt: 2 }}>
+              {companyName}의 분석 리포트를 불러오는 중...
+            </Typography>
+          </Paper>
+        </Container>
+      );
+    }
+
+    if (accordionError) {
+      return (
+        <Container maxWidth="lg" sx={{ py: 4 }}>
+          <Paper elevation={3} sx={{ p: 4 }}>
+            <Alert severity="error" sx={{ mb: 3 }}>{accordionError}</Alert>
+            <Button variant="contained" startIcon={<ArrowBackIcon />} onClick={onBack}>
+              돌아가기
+            </Button>
+          </Paper>
+        </Container>
+      );
+    }
+
+    return (
+      <Container maxWidth="lg" sx={{ py: 3 }}>
+        {/* Header */}
+        <Paper elevation={3} sx={{ p: 3, mb: 3, bgcolor: '#f5f5f5' }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Box
+                sx={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 2,
+                  bgcolor: alpha('#1565c0', 0.1),
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <BusinessIcon sx={{ color: '#1565c0', fontSize: 32 }} />
+              </Box>
+              <Box>
+                <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
+                  {companyName}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  AI 심층 분석 리포트 ({accordionReports.length}개 주제)
+                </Typography>
+              </Box>
+            </Box>
+            <Button variant="outlined" startIcon={<ArrowBackIcon />} onClick={onBack}>
+              돌아가기
+            </Button>
+          </Box>
+        </Paper>
+
+        {/* Accordion List */}
+        {accordionReports.length === 0 ? (
+          <Paper variant="outlined" sx={{ p: 4, textAlign: 'center', borderStyle: 'dashed', borderRadius: 3 }}>
+            <ArticleIcon sx={{ fontSize: 48, color: 'grey.300', mb: 1 }} />
+            <Typography variant="body1" color="text.secondary">
+              이 기업에 대한 분석 리포트가 아직 없습니다.
+            </Typography>
+          </Paper>
+        ) : (
+          <Stack spacing={1}>
+            {accordionReports.map((rpt) => {
+              const rptCitationDict = buildCitationDict(rpt.references_data);
+              const rptContent = addInlineCitationLinks(rpt.report_content, rpt.references_data);
+              const topicIdx = ORDERED_TOPICS.findIndex((t) => rpt.topic?.includes(t) || t.includes(rpt.topic));
+              const topicLabel = topicIdx >= 0 ? `T0${topicIdx + 1}` : '';
+
+              return (
+                <Accordion
+                  key={rpt.id || rpt.job_id}
+                  expanded={expandedTopic === rpt.topic}
+                  onChange={(_, isExpanded) => setExpandedTopic(isExpanded ? rpt.topic : null)}
+                  sx={{
+                    borderRadius: '8px !important',
+                    '&:before': { display: 'none' },
+                    boxShadow: expandedTopic === rpt.topic ? 3 : 1,
+                    transition: 'box-shadow 0.2s',
+                  }}
+                >
+                  <AccordionSummary
+                    expandIcon={<ExpandMoreIcon />}
+                    sx={{
+                      minHeight: 64,
+                      '& .MuiAccordionSummary-content': { alignItems: 'center', gap: 2 },
+                    }}
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1 }}>
+                      {topicLabel && (
+                        <Chip
+                          label={topicLabel}
+                          size="small"
+                          color="primary"
+                          variant="outlined"
+                          sx={{ fontWeight: 700, minWidth: 40 }}
+                        />
+                      )}
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                          {rpt.topic}
+                        </Typography>
+                        <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
+                          <Typography variant="caption" color="text.secondary">
+                            {rpt.model_name}
+                          </Typography>
+                          {rpt.created_at && (
+                            <Typography variant="caption" color="text.secondary">
+                              | {new Date(rpt.created_at).toLocaleDateString('ko-KR')}
+                            </Typography>
+                          )}
+                          {Object.keys(rptCitationDict).length > 0 && (
+                            <Chip
+                              label={`참고문헌 ${Object.keys(rptCitationDict).length}`}
+                              size="small"
+                              variant="outlined"
+                              color="success"
+                              sx={{ height: 20, fontSize: '0.7rem' }}
+                            />
+                          )}
+                        </Stack>
+                      </Box>
+                      <Tooltip title="HTML 다운로드">
+                        <IconButton
+                          size="small"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            exportAsHtml(rpt, rptCitationDict);
+                          }}
+                        >
+                          <DownloadIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ pt: 0, pb: 3, px: 3 }}>
+                    <Divider sx={{ mb: 2 }} />
+                    <div className="markdown-container">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={markdownComponents}
+                      >
+                        {rptContent}
+                      </ReactMarkdown>
+                    </div>
+                    {/* References (inline) */}
+                    {Object.keys(rptCitationDict).length > 0 && (
+                      <Box sx={{ mt: 3 }}>
+                        <Divider sx={{ mb: 2 }} />
+                        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+                          참고 문헌
+                        </Typography>
+                        <ReferencesPanel citationDict={rptCitationDict} />
+                      </Box>
+                    )}
+                  </AccordionDetails>
+                </Accordion>
+              );
+            })}
+          </Stack>
+        )}
+
+        {/* Footer */}
+        <Box sx={{ mt: 4, display: 'flex', justifyContent: 'center' }}>
+          <Button variant="contained" startIcon={<ArrowBackIcon />} onClick={onBack}>
+            기업 분석으로 돌아가기
+          </Button>
+        </Box>
+      </Container>
+    );
+  }
 
   // ════════════════════════════════════════════════
   // Render: Polling
@@ -663,85 +999,7 @@ const ReportViewer = ({ jobId, initialStatus, onBack }) => {
                 <div className="markdown-container">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
-                    components={{
-                      h1: ({ children, ...props }) => {
-                        const text = extractTextFromChildren(children);
-                        const id = toAnchor(text);
-                        return <Typography id={id} variant="h3" component="h1" sx={{ mt: 3, mb: 2, fontWeight: 'bold' }} {...props}>{children}</Typography>;
-                      },
-                      h2: ({ children, ...props }) => {
-                        const text = extractTextFromChildren(children);
-                        const id = toAnchor(text);
-                        return <Typography id={id} variant="h5" component="h2" sx={{ mt: 2.5, mb: 1.5, fontWeight: 'bold' }} {...props}>{children}</Typography>;
-                      },
-                      h3: ({ children, ...props }) => {
-                        const text = extractTextFromChildren(children);
-                        const id = toAnchor(text);
-                        return <Typography id={id} variant="h6" component="h3" sx={{ mt: 2, mb: 1, fontWeight: 'bold' }} {...props}>{children}</Typography>;
-                      },
-                      p: ({ ...props }) => <Typography variant="body1" sx={{ mb: 1.5, lineHeight: 1.7 }} {...props} />,
-                      ul: ({ ...props }) => <Box component="ul" sx={{ ml: 2, mb: 1.5 }} {...props} />,
-                      ol: ({ ...props }) => <Box component="ol" sx={{ ml: 2, mb: 1.5 }} {...props} />,
-                      li: ({ ...props }) => <Box component="li" sx={{ mb: 0.5, lineHeight: 1.6 }} {...props} />,
-                      table: ({ ...props }) => (
-                        <Box sx={{ overflowX: 'auto', mb: 2, border: '1px solid #ddd', borderRadius: '4px' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' }} {...props} />
-                        </Box>
-                      ),
-                      thead: ({ ...props }) => <thead style={{ backgroundColor: '#f0f0f0' }} {...props} />,
-                      th: ({ ...props }) => <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #ddd', fontWeight: 'bold' }} {...props} />,
-                      td: ({ ...props }) => <td style={{ padding: '10px 12px', borderBottom: '1px solid #eee' }} {...props} />,
-                      code: ({ inline, ...props }) =>
-                        inline
-                          ? <code style={{ backgroundColor: '#f5f5f5', padding: '2px 6px', borderRadius: '3px', fontFamily: 'monospace' }} {...props} />
-                          : <pre style={{ backgroundColor: '#f5f5f5', padding: '12px', borderRadius: '4px', overflowX: 'auto', marginBottom: '1.5rem' }}><code {...props} /></pre>,
-                      blockquote: ({ ...props }) => (
-                        <Box component="blockquote" sx={{ borderLeft: '4px solid #1976d2', pl: 2, ml: 0, my: 2, fontStyle: 'italic', color: 'text.secondary' }} {...props} />
-                      ),
-                      a: ({ href, children, ...props }) => {
-                        // 인용 링크 스타일 감지: [[1]](url)
-                        const childText = extractTextFromChildren(children);
-                        const isCitation = /^\[\d+\]$/.test(childText);
-
-                        if (isCitation) {
-                          return (
-                            <Tooltip title={href || ''} arrow>
-                              <Typography
-                                component="a"
-                                href={href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                sx={{
-                                  color: '#1976d2',
-                                  fontWeight: 'bold',
-                                  fontSize: '0.8em',
-                                  verticalAlign: 'super',
-                                  textDecoration: 'none',
-                                  cursor: 'pointer',
-                                  '&:hover': { textDecoration: 'underline', color: '#1565c0' },
-                                }}
-                                {...props}
-                              >
-                                {children}
-                              </Typography>
-                            </Tooltip>
-                          );
-                        }
-
-                        return (
-                          <Typography
-                            component="a"
-                            href={href}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            sx={{ color: '#1976d2', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
-                            {...props}
-                          >
-                            {children}
-                          </Typography>
-                        );
-                      },
-                    }}
+                    components={markdownComponents}
                   >
                     {processedContent}
                   </ReactMarkdown>
@@ -789,20 +1047,5 @@ const ReportViewer = ({ jobId, initialStatus, onBack }) => {
 
   return null;
 };
-
-// ── Utility: extract text from React children ──
-function extractTextFromChildren(children) {
-  if (typeof children === 'string') return children;
-  if (Array.isArray(children)) return children.map(extractTextFromChildren).join('');
-  if (children?.props?.children) return extractTextFromChildren(children.props.children);
-  return String(children || '');
-}
-
-function toAnchor(text) {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s가-힣-]/g, '')
-    .replace(/\s+/g, '-');
-}
 
 export default ReportViewer;

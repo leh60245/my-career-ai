@@ -22,6 +22,7 @@ import BusinessIcon from '@mui/icons-material/Business';
 import DescriptionIcon from '@mui/icons-material/Description';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver';
+import HomeIcon from '@mui/icons-material/Home';
 import SettingsIcon from '@mui/icons-material/Settings';
 import PersonIcon from '@mui/icons-material/Person';
 import LogoutIcon from '@mui/icons-material/Logout';
@@ -31,6 +32,7 @@ const DRAWER_WIDTH = 260;
 
 /** 상단 메뉴 항목 */
 const TOP_MENU = [
+    { key: 'home', label: '홈', icon: <HomeIcon /> },
     { key: 'verification', label: '지원 검증', icon: <VerifiedUserIcon />, disabled: true },
     { key: 'company', label: '기업 분석', icon: <BusinessIcon /> },
     { key: 'resume', label: '자소서 코칭', icon: <DescriptionIcon /> },

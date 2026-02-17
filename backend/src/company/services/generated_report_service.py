@@ -33,12 +33,29 @@ class GeneratedReportService:
         meta_info: dict[str, Any] | None = None,
         toc_text: str | None = None,
         references_data: dict[str, Any] | None = None,
+        conversation_log: list | dict | None = None,
     ) -> GeneratedReport:
         """
         STORM 결과물을 DB에 저장
+
+        Args:
+            job_id: STORM 작업 UUID
+            company_name: 분석 대상 기업명
+            topic: 분석 주제
+            content: 리포트 본문 (Markdown)
+            model_name: 사용된 LLM 모델명
+            meta_info: 부가 메타정보 (파일 경로, 설정 등)
+            toc_text: 목차 텍스트
+            references_data: 참고문헌 데이터 (url_to_unified_index 등)
+            conversation_log: 페르소나 대화 로그 (STORM 연구 대화)
         """
         if meta_info is None:
             meta_info = {}
+
+        # conversation_log가 list인 경우 dict로 래핑 (JSON 컬럼 호환)
+        conv_log = conversation_log
+        if isinstance(conversation_log, list):
+            conv_log = {"conversations": conversation_log}
 
         report_data = {
             "job_id": job_id,
@@ -49,6 +66,7 @@ class GeneratedReportService:
             "meta_info": meta_info,
             "toc_text": toc_text,
             "references_data": references_data,
+            "conversation_log": conv_log,
         }
 
         # DB 저장
@@ -63,3 +81,8 @@ class GeneratedReportService:
     async def get_report_by_job_id(self, job_id: str) -> GeneratedReport | None:
         """Job ID로 리포트 조회 (1:1 관계)"""
         return await self.repository.get_by_job_id(job_id)
+
+    async def get_reports_by_company_name(self, company_name: str) -> list[GeneratedReport]:
+        """특정 기업의 모든 생성 리포트를 조회한다."""
+        reports = await self.repository.get_by_company_name(company_name)
+        return list(reports)
