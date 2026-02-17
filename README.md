@@ -2,7 +2,6 @@
 ```
 enterprise-storm
 ├─ backend
-│  ├─ alembic.ini
 │  ├─ main.py
 │  ├─ src
 │  │  ├─ common
@@ -10,18 +9,17 @@ enterprise-storm
 │  │  │  ├─ database
 │  │  │  │  ├─ connection.py
 │  │  │  │  ├─ migrations
+│  │  │  │  │  ├─ alembic.ini
 │  │  │  │  │  ├─ env.py
 │  │  │  │  │  ├─ script.py.mako
 │  │  │  │  │  └─ versions
-│  │  │  │  │     └─ 08bbea7fc671_rebuild_schema.py
+│  │  │  │  │     └─ 001_initial_schema.py
 │  │  │  │  └─ __init__.py
+│  │  │  ├─ embedding.py
+│  │  │  ├─ entity_resolver.py
 │  │  │  ├─ enums.py
-│  │  │  ├─ llm
-│  │  │  │  ├─ client.py
-│  │  │  │  └─ __init__.py
 │  │  │  ├─ models
 │  │  │  │  ├─ base.py
-│  │  │  │  ├─ job.py
 │  │  │  │  └─ __init__.py
 │  │  │  ├─ repositories
 │  │  │  │  ├─ base_repository.py
@@ -29,15 +27,8 @@ enterprise-storm
 │  │  │  ├─ schemas
 │  │  │  │  ├─ base.py
 │  │  │  │  └─ __init__.py
-│  │  │  ├─ search
-│  │  │  │  ├─ client.py
-│  │  │  │  └─ __init__.py
-│  │  │  ├─ services
-│  │  │  │  ├─ embedding.py
-│  │  │  │  ├─ entity_resolver.py
-│  │  │  │  └─ __init__.py
 │  │  │  └─ __init__.py
-│  │  ├─ company
+│  │  ├─ company_analysis
 │  │  │  ├─ engine
 │  │  │  │  ├─ adapter.py
 │  │  │  │  ├─ builder.py
@@ -51,7 +42,6 @@ enterprise-storm
 │  │  │  │  ├─ generated_report.py
 │  │  │  │  ├─ report_job.py
 │  │  │  │  ├─ source_material.py
-│  │  │  │  ├─ talent.py
 │  │  │  │  └─ __init__.py
 │  │  │  ├─ repositories
 │  │  │  │  ├─ analysis_report_repository.py
@@ -59,9 +49,7 @@ enterprise-storm
 │  │  │  │  ├─ generated_report_repository.py
 │  │  │  │  ├─ report_job_repository.py
 │  │  │  │  ├─ source_material_repository.py
-│  │  │  │  ├─ talent_repository.py
 │  │  │  │  └─ __init__.py
-│  │  │  ├─ router.py
 │  │  │  ├─ schemas
 │  │  │  │  ├─ analysis_report.py
 │  │  │  │  ├─ company.py
@@ -83,61 +71,51 @@ enterprise-storm
 │  │  │     ├─ reranker_service.py
 │  │  │     ├─ source_material_service.py
 │  │  │     ├─ storm_service.py
-│  │  │     ├─ talent_service.py
 │  │  │     └─ __init__.py
 │  │  ├─ resume
-│  │  │  ├─ models.py
-│  │  │  ├─ repositories.py
-│  │  │  ├─ router.py
-│  │  │  ├─ schemas.py
-│  │  │  ├─ services
-│  │  │  │  ├─ correction_service.py
-│  │  │  │  ├─ guide_service.py
-│  │  │  │  └─ __init__.py
-│  │  │  └─ __init__.py
-│  │  ├─ user
-│  │  │  ├─ models.py
-│  │  │  ├─ repositories.py
-│  │  │  ├─ router.py
-│  │  │  ├─ schemas.py
-│  │  │  ├─ services.py
-│  │  │  └─ __init__.py
 │  │  └─ __init__.py
 │  └─ __init__.py
 ├─ CLAUDE.md
 ├─ docker-compose.yml
 ├─ docker-credential-fake.cmd
-├─ docs
+├─ examples
+│  ├─ costorm_examples
+│  │  └─ run_costorm_gpt.py
+│  └─ storm_examples
+│     ├─ helper
+│     │  └─ process_kaggle_arxiv_abstract_dataset.py
+│     ├─ README.md
+│     ├─ run_storm_wiki_claude.py
+│     ├─ run_storm_wiki_deepseek.py
+│     ├─ run_storm_wiki_gemini.py
+│     ├─ run_storm_wiki_gpt.py
+│     ├─ run_storm_wiki_gpt_with_VectorRM.py
+│     ├─ run_storm_wiki_groq.py
+│     ├─ run_storm_wiki_mistral.py
+│     ├─ run_storm_wiki_ollama.py
+│     ├─ run_storm_wiki_ollama_with_searxng.py
+│     └─ run_storm_wiki_serper.py
 ├─ frontend
 │  └─ react-app
 │     ├─ .eslintrc.json
 │     ├─ dist
 │     │  ├─ assets
-│     │  │  ├─ index-Bbz7mRN2.js
-│     │  │  ├─ index-Bbz7mRN2.js.map
+│     │  │  ├─ index-C0Sqlqmx.js
+│     │  │  ├─ index-C0Sqlqmx.js.map
 │     │  │  └─ index-D_pvcILE.css
 │     │  └─ index.html
 │     ├─ index.html
 │     ├─ package-lock.json
 │     ├─ package.json
+│     ├─ README.md
 │     ├─ src
 │     │  ├─ App.jsx
 │     │  ├─ components
 │     │  │  ├─ Dashboard.jsx
 │     │  │  └─ ReportViewer.jsx
-│     │  ├─ contexts
-│     │  │  ├─ AuthContext.jsx
-│     │  │  └─ ResumeContext.jsx
 │     │  ├─ index.css
-│     │  ├─ layouts
-│     │  │  └─ MainLayout.jsx
 │     │  ├─ main.jsx
-│     │  ├─ pages
-│     │  │  ├─ CompanyAnalysis.jsx
-│     │  │  ├─ Home.jsx
-│     │  │  └─ ResumeCoaching.jsx
 │     │  ├─ services
-│     │  │  ├─ apiClient.js
 │     │  │  └─ apiService.js
 │     │  └─ styles
 │     │     └─ ReportViewer.css
@@ -161,39 +139,7 @@ enterprise-storm
 │  │  │  └─ __init__.py
 │  │  └─ __init__.py
 │  ├─ dataclass.py
-│  ├─ demo_light
-│  │  ├─ .streamlit
-│  │  │  └─ config.toml
-│  │  ├─ assets
-│  │  │  ├─ article_display.jpg
-│  │  │  ├─ create_article.jpg
-│  │  │  └─ void.jpg
-│  │  ├─ demo_util.py
-│  │  ├─ pages_util
-│  │  │  ├─ CreateNewArticle.py
-│  │  │  └─ MyArticles.py
-│  │  ├─ README.md
-│  │  ├─ requirements.txt
-│  │  ├─ stoc.py
-│  │  └─ storm.py
 │  ├─ encoder.py
-│  ├─ examples
-│  │  ├─ costorm_examples
-│  │  │  └─ run_costorm_gpt.py
-│  │  └─ storm_examples
-│  │     ├─ helper
-│  │     │  └─ process_kaggle_arxiv_abstract_dataset.py
-│  │     ├─ README.md
-│  │     ├─ run_storm_wiki_claude.py
-│  │     ├─ run_storm_wiki_deepseek.py
-│  │     ├─ run_storm_wiki_gemini.py
-│  │     ├─ run_storm_wiki_gpt.py
-│  │     ├─ run_storm_wiki_gpt_with_VectorRM.py
-│  │     ├─ run_storm_wiki_groq.py
-│  │     ├─ run_storm_wiki_mistral.py
-│  │     ├─ run_storm_wiki_ollama.py
-│  │     ├─ run_storm_wiki_ollama_with_searxng.py
-│  │     └─ run_storm_wiki_serper.py
 │  ├─ interface.py
 │  ├─ lm.py
 │  ├─ logging_wrapper.py
@@ -217,9 +163,20 @@ enterprise-storm
 ├─ pytest.ini
 ├─ README.md
 ├─ requirements.txt
-└─ scripts
-   ├─ init_db.py
-   ├─ run_ingestion.py
-   └─ run_storm.py
+├─ scripts
+│  ├─ init_db.py
+│  ├─ run_ingestion.py
+│  └─ run_storm.py
+└─ tests
+   ├─ conftest.py
+   ├─ integration
+   │  ├─ test_db_connection.py
+   │  ├─ test_repositories.py
+   │  └─ __init__.py
+   ├─ README.md
+   ├─ unit
+   │  ├─ test_generation_service.py
+   │  └─ __init__.py
+   └─ __init__.py
 
 ```
