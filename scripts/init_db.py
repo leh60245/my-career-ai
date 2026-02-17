@@ -4,8 +4,9 @@ import logging
 import os
 import sys
 
-from src.common.models.base import Base
-from src.database import AsyncDatabaseEngine
+from backend.src.common.database import AsyncDatabaseEngine
+from backend.src.common.models import *  # noqa: F401, F403
+from backend.src.common.models.base import Base
 
 
 # [1] 프로젝트 루트 경로 설정 (src 모듈 인식을 위해 필수)
@@ -16,9 +17,6 @@ sys.path.append(root_dir)
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("DB_INIT")
-
-# [2] 모델 등록 (중요: 여기서 임포트해야 Base.metadata에 테이블이 등록됨)
-# 사용하지 않더라도 임포트는 반드시 유지해야 합니다.
 
 
 async def init_db(reset: bool = False):
@@ -37,7 +35,7 @@ async def init_db(reset: bool = False):
         async with db.engine.begin() as conn:
             # [3] 리셋 옵션 처리 (주의: 데이터가 모두 날아감)
             if reset:
-                logger.warning("⚠️  '--reset' flag detected. Dropping all existing tables...")
+                logger.warning("[WARNING]  '--reset' flag detected. Dropping all existing tables...")
                 await conn.run_sync(Base.metadata.drop_all)
                 logger.info("🗑️  All tables dropped.")
 
@@ -48,7 +46,7 @@ async def init_db(reset: bool = False):
             # 생성된 테이블 목록 확인 (선택 사항)
             logger.info(f"📋 Registered Tables: {list(Base.metadata.tables.keys())}")
 
-        logger.info("✅ Database initialization completed successfully!")
+        logger.info(" Database initialization completed successfully!")
 
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")

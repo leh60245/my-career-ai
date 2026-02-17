@@ -4,25 +4,27 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from dotenv import load_dotenv
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
-from src.common.models.base import Base
 
+from backend.src.common.config import DB_CONFIG
+from backend.src.common.models.base import Base
 
-# .env 파일 로드
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# 환경 변수 설정
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
-DB_NAME = os.getenv("DB_NAME")
 
-DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+def _build_database_url() -> str:
+    """DB 설정으로부터 비동기 연결 URL을 생성합니다."""
+    user = DB_CONFIG["user"]
+    password = DB_CONFIG["password"]
+    host = DB_CONFIG["host"]
+    port = DB_CONFIG["port"]
+    database = DB_CONFIG["database"]
+    return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
+
+
+DATABASE_URL = _build_database_url()
 
 
 class AsyncDatabaseEngine:
@@ -43,24 +45,18 @@ class AsyncDatabaseEngine:
         if hasattr(self, "engine") and self.engine is not None:
             return
 
+        echo = os.getenv("DB_ECHO", "0") == "1" or os.getenv("ENV", "").lower() in {"dev", "development"}
         self.engine = create_async_engine(
-            DATABASE_URL,
-            echo=False,
-            pool_pre_ping=True,
-            pool_size=20,
-            max_overflow=10,
-            pool_recycle=3600,
+            DATABASE_URL, echo=echo, pool_pre_ping=True, pool_size=20, max_overflow=10, pool_recycle=3600
         )
 
         self.session_factory = async_sessionmaker(
-            bind=self.engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
-            autoflush=False,
-            autocommit=False,
+            bind=self.engine, class_=AsyncSession, expire_on_commit=False, autoflush=False, autocommit=False
         )
 
-        logger.info(f"✅ AsyncDatabaseEngine initialized: {DB_HOST}:{DB_PORT}/{DB_NAME}")
+        logger.info(
+            "✅ AsyncDatabaseEngine initialized: %s:%s/%s", DB_CONFIG["host"], DB_CONFIG["port"], DB_CONFIG["database"]
+        )
 
     async def initialize(self) -> None:
         """
@@ -72,12 +68,12 @@ class AsyncDatabaseEngine:
         try:
             async with self.engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
-            logger.info("✅ Database connection pool warmed up")
+            logger.info("Database connection pool warmed up")
         except Exception as e:
-            logger.warning(f"⚠️ DB warmup failed (will retry on first request): {e}")
+            logger.warning(f"[ERROR] DB warmup failed (will retry on first request): {e}")
 
         if os.getenv("AUTO_CREATE_SCHEMA") == "1":
-            logger.warning("⚠️ AUTO_CREATE_SCHEMA=1: Creating DB schema from models.")
+            logger.warning("[WARNING] AUTO_CREATE_SCHEMA=1: Creating DB schema from models.")
             await ensure_schema()
 
     @asynccontextmanager
@@ -115,7 +111,10 @@ async def ensure_schema(reset: bool = False) -> None:
     개발/테스트 환경에서만 사용하세요.
     """
     # 모델 등록을 위해 임포트 (Base.metadata 채우기)
-    from src.company_analysis.models import analysis_report, company, generated_report, report_job, source_material  # noqa: F401
+    from backend.src.common.models import job as common_job_models  # noqa: F401
+    from backend.src.company import models as company_models  # noqa: F401
+    from backend.src.resume import models as resume_models  # noqa: F401
+    from backend.src.user import models as user_models  # noqa: F401
 
     db = AsyncDatabaseEngine()
     async with db.engine.begin() as conn:
@@ -123,9 +122,10 @@ async def ensure_schema(reset: bool = False) -> None:
             await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
+
 def create_isolated_engine() -> AsyncEngine:
 
-    db_url = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    db_url = _build_database_url()
 
     return create_async_engine(
         db_url,
@@ -133,5 +133,12 @@ def create_isolated_engine() -> AsyncEngine:
         pool_pre_ping=True,
         # 스레드마다 별도 연결이므로 풀 사이즈를 작게 유지
         pool_size=2,
-        max_overflow=5
+        max_overflow=5,
     )
+
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI 의존성 주입용 세션 제너레이터."""
+    db = AsyncDatabaseEngine()
+    async with db.get_session() as session:
+        yield session

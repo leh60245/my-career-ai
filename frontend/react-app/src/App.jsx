@@ -1,23 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { Box } from '@mui/material';
-import Dashboard from './components/Dashboard';
+import { AuthProvider } from './contexts/AuthContext';
+import { ResumeProvider } from './contexts/ResumeContext';
+import { MainLayout } from './layouts/MainLayout';
+import { Home } from './pages/Home';
+import { CompanyAnalysis } from './pages/CompanyAnalysis';
+import { ResumeCoaching } from './pages/ResumeCoaching';
 import ReportViewer from './components/ReportViewer';
 
-// MUI 테마 설정 (1920x1080 해상도 기준)
+// MUI theme (1920x1080 기준)
 const theme = createTheme({
   palette: {
-    primary: {
-      main: '#1976d2',
-    },
-    secondary: {
-      main: '#dc004e',
-    },
-    background: {
-      default: '#f5f5f5',
-      paper: '#ffffff',
-    },
+    primary: { main: '#1565c0' },
+    secondary: { main: '#e91e63' },
+    background: { default: '#f5f7fa', paper: '#ffffff' },
   },
   typography: {
     fontFamily: [
@@ -33,82 +31,99 @@ const theme = createTheme({
   components: {
     MuiButton: {
       styleOverrides: {
-        root: {
-          textTransform: 'none',
-          fontSize: '1rem',
-        },
+        root: { textTransform: 'none', fontSize: '0.9rem', borderRadius: 8 },
+      },
+    },
+    MuiPaper: {
+      styleOverrides: {
+        root: { borderRadius: 8 },
       },
     },
   },
 });
 
 /**
- * Enterprise STORM Frontend Application
+ * My Career AI - Main Application
  *
- * Architecture:
- *   Dashboard  → 기업 선택 및 리포트 생성/목록 관리
- *   ReportViewer → 리포트 진행 상태 확인 + 완료된 리포트 표시
+ * Pages:
+ *   company  - 기업 분석 (검색 + 추천 + STORM 리포트 생성)
+ *   resume   - 자소서 코칭 (2-Column Split View)
+ *   viewer   - 리포트 뷰어 (폴링 + 마크다운 렌더링)
  *
- * Flow:
- *   1. Dashboard에서 기업 선택 → 생성 요청 (POST /api/generate)
- *   2. jobId 획득 → ReportViewer로 전환
- *   3. ReportViewer에서 3초 간격 폴링 (GET /api/status/{jobId})
- *   4. COMPLETED → GET /api/report/by-job/{jobId} 로 리포트 조회
- *   5. react-markdown으로 렌더링
- *
- * State:
- *   view   - 'dashboard' | 'viewer'
- *   jobId  - 활성 Job의 UUID (null이면 대시보드)
+ * Navigation: MainLayout 사이드바를 통한 state 기반 전환
  */
-
 function App() {
-  const [view, setView] = useState('dashboard');
+  const [currentPage, setCurrentPage] = useState('home');
   const [jobId, setJobId] = useState(null);
   const [initialStatus, setInitialStatus] = useState(null);
+  const [viewerCompanyName, setViewerCompanyName] = useState(null);
 
-  /** 생성 직후 → Viewer로 전환 (폴링 필요) */
-  const handleReportStart = (newJobId) => {
-    setJobId(newJobId);
-    setInitialStatus('PENDING');
-    setView('viewer');
-  };
-
-  /** 테이블 "보기" 버튼 → Viewer로 전환 (상태에 따라 분기) */
-  const handleViewReport = (targetJobId, status) => {
+  /** 기업 분석 -> ReportViewer 전환 (단일 리포트 - 폴링 모드) */
+  const handleViewReport = useCallback((targetJobId, status) => {
     setJobId(targetJobId);
+    setViewerCompanyName(null);
     setInitialStatus((status || '').toUpperCase());
-    setView('viewer');
-  };
+    setCurrentPage('viewer');
+  }, []);
 
-  /** Viewer에서 뒤로가기 → Dashboard 복귀 */
-  const handleBackToDashboard = () => {
-    setView('dashboard');
+  /** 기업 분석 -> ReportViewer 전환 (아코디언 모드 - 기업 전체 리포트) */
+  const handleViewCompanyReports = useCallback((companyName) => {
+    setViewerCompanyName(companyName);
     setJobId(null);
+    setInitialStatus(null);
+    setCurrentPage('viewer');
+  }, []);
+
+  /** ReportViewer 뒤로가기 -> 기업 분석 복귀 */
+  const handleBackFromViewer = useCallback(() => {
+    setCurrentPage('company');
+    setJobId(null);
+    setViewerCompanyName(null);
+  }, []);
+
+  /** 사이드바 네비게이션 */
+  const handleNavigate = useCallback((page) => {
+    setCurrentPage(page);
+  }, []);
+
+  /** 페이지 렌더링 */
+  const renderPage = () => {
+    switch (currentPage) {
+      case 'home':
+        return <Home onNavigate={handleNavigate} />;
+      case 'company':
+        return (
+          <CompanyAnalysis
+            onViewReport={handleViewReport}
+            onViewCompanyReports={handleViewCompanyReports}
+          />
+        );
+      case 'resume':
+        return <ResumeCoaching />;
+      case 'viewer':
+        return (
+          <ReportViewer
+            jobId={jobId}
+            companyName={viewerCompanyName}
+            initialStatus={initialStatus}
+            onBack={handleBackFromViewer}
+          />
+        );
+      default:
+        return <Home onNavigate={handleNavigate} />;
+    }
   };
 
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Box
-        sx={{
-          width: '100%',
-          minHeight: '100vh',
-          backgroundColor: '#f5f5f5',
-        }}
-      >
-        {view === 'dashboard' ? (
-          <Dashboard
-            onReportStart={handleReportStart}
-            onViewReport={handleViewReport}
-          />
-        ) : (
-          <ReportViewer
-            jobId={jobId}
-            initialStatus={initialStatus}
-            onBack={handleBackToDashboard}
-          />
-        )}
-      </Box>
+      <AuthProvider>
+        <ResumeProvider>
+          <MainLayout currentPage={currentPage} onNavigate={handleNavigate}>
+            {renderPage()}
+          </MainLayout>
+        </ResumeProvider>
+      </AuthProvider>
     </ThemeProvider>
   );
 }

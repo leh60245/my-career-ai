@@ -23,24 +23,19 @@ import os
 import sys
 from argparse import ArgumentParser
 
+from backend.src.common.config import AI_CONFIG, TOPICS
+from backend.src.common.database.connection import AsyncDatabaseEngine, ensure_schema
+from backend.src.common.enums import ReportJobStatus
+from backend.src.company.engine.storm_pipeline import run_storm_pipeline
+from backend.src.company.repositories.company_repository import CompanyRepository
+from backend.src.company.repositories.report_job_repository import ReportJobRepository
+from backend.src.company.services.report_job_service import ReportJobService
+
 
 # 프로젝트 루트 경로 설정
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.common import AI_CONFIG, TOPICS, ReportJobStatus
-from src.company_analysis.repositories.company_repository import CompanyRepository
-from src.company_analysis.repositories.report_job_repository import ReportJobRepository
-from src.database.connection import AsyncDatabaseEngine, ensure_schema
-from src.engine.storm_pipeline import run_storm_pipeline
-from src.services.report_job_service import ReportJobService
-
-
 # 로깅 설정
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger(__name__)
 
 
@@ -79,9 +74,9 @@ async def select_company_and_topic_interactive() -> tuple[int, str, str]:
             sel_id = int(sel)
             target_company = next((item for item in companies if item[0] == sel_id), None)
             if not target_company:
-                print("⚠️ 목록에 없는 ID입니다.")
+                print("[WARNING] 목록에 없는 ID입니다.")
         except ValueError:
-            print("⚠️ 숫자를 입력해주세요.")
+            print("[WARNING] 숫자를 입력해주세요.")
 
     # 2. 주제 선택
     print(f"\n📝 [{target_company[1]}] 관련 분석 주제를 선택하세요:")
@@ -102,9 +97,9 @@ async def select_company_and_topic_interactive() -> tuple[int, str, str]:
             elif idx == len(TOPICS):
                 target_topic = input("   ✍️  질문할 내용을 입력하세요: ").strip()
             else:
-                print("⚠️ 올바른 번호를 입력해주세요.")
+                print("[WARNING] 올바른 번호를 입력해주세요.")
         except ValueError:
-            print("⚠️ 숫자를 입력해주세요.")
+            print("[WARNING] 숫자를 입력해주세요.")
 
     return target_company[0], target_company[1], target_topic
 
@@ -119,7 +114,7 @@ async def main():
 
     # 0. 개발 편의: Alembic 없이 스키마 생성
     if os.getenv("AUTO_CREATE_SCHEMA") == "1":
-        logger.warning("⚠️ AUTO_CREATE_SCHEMA=1: Creating DB schema from models.")
+        logger.warning("[WARNING] AUTO_CREATE_SCHEMA=1: Creating DB schema from models.")
         await ensure_schema()
 
     # 1. 입력값 처리 (CLI Argument vs Interactive)
@@ -149,32 +144,18 @@ async def main():
         job_repo = ReportJobRepository(session)
         job_service = ReportJobService(job_repo)
 
-        job_id = await job_service.create_job(
-            company_id=company_id,
-            company_name=company_name,
-            topic=topic
-        )
+        job_id = await job_service.create_job(company_id=company_id, company_name=company_name, topic=topic)
         logger.info(f"🆔 Job Created: {job_id}")
 
     # 3. 파이프라인 실행
     # CLI 환경이므로 상태 관리를 위한 로컬 딕셔너리 생성
     # (API 서버에서는 이게 전역 메모리 변수가 됨)
-    jobs_dict = {
-        job_id: {
-            "status": ReportJobStatus.PENDING.value,
-            "progress": 0,
-            "message": "Initializing..."
-        }
-    }
+    jobs_dict = {job_id: {"status": ReportJobStatus.PENDING.value, "progress": 0, "message": "Initializing..."}}
 
     try:
         # [핵심] 모든 로직은 엔진으로 위임
         await run_storm_pipeline(
-            job_id=job_id,
-            company_name=company_name,
-            topic=topic,
-            jobs_dict=jobs_dict,
-            model_provider=provider
+            job_id=job_id, company_name=company_name, topic=topic, jobs_dict=jobs_dict, model_provider=provider
         )
 
         # 결과 확인
@@ -191,11 +172,12 @@ async def main():
         await db.dispose()
 
     if AI_CONFIG.get("storm_force_exit"):
-        logger.warning("⚠️ STORM_FORCE_EXIT=1 is set. Exiting process now.")
+        logger.warning("[WARNING] STORM_FORCE_EXIT=1 is set. Exiting process now.")
         try:
             sys.exit(0)
         finally:
             os._exit(0)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

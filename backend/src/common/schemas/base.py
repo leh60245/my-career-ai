@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Generic, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 T = TypeVar("T")
@@ -36,19 +36,18 @@ class PagedResponse(BaseModel, Generic[T]):
         """Calculate total number of pages."""
         return (self.total + self.limit - 1) // self.limit
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "total": 150,
                 "page": 1,
                 "limit": 10,
                 "offset": 0,
-                "data": [
-                    {"id": 1, "name": "Company 1"},
-                    {"id": 2, "name": "Company 2"},
-                ],
+                "data": [{"id": 1, "name": "Company 1"}, {"id": 2, "name": "Company 2"}],
             }
-        }
+        },
+    )
 
 
 class ErrorResponse(BaseModel):
@@ -74,15 +73,17 @@ class ErrorResponse(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Error occurrence time")
     details: dict | None = Field(None, description="Additional error context")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "error": "EntityNotFound",
                 "message": "Company with id 999 not found",
                 "status_code": 404,
                 "timestamp": "2026-01-21T10:30:00Z",
             }
-        }
+        },
+    )
 
 
 __all__ = ["PagedResponse", "ErrorResponse"]

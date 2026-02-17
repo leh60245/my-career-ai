@@ -1,21 +1,23 @@
 import argparse
 import asyncio
 import logging
-
-# 프로젝트 루트 경로 설정
 import os
 import sys
 from datetime import datetime, timedelta
 
+from backend.src.common.database import AsyncDatabaseEngine
+from backend.src.common.services.embedding import Embedding
+from backend.src.company.repositories.analysis_report_repository import AnalysisReportRepository
+from backend.src.company.repositories.company_repository import CompanyRepository
+from backend.src.company.repositories.source_material_repository import SourceMaterialRepository
+from backend.src.company.services.analysis_service import AnalysisService
+from backend.src.company.services.company_service import CompanyService
+from backend.src.company.services.dart_service import DartService
+from backend.src.company.services.ingestion_service import IngestionService
 
+
+# 프로젝트 루트 경로 설정
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.common import Embedding
-from src.company_analysis.repositories import AnalysisReportRepository, CompanyRepository, SourceMaterialRepository
-from src.database import AsyncDatabaseEngine
-from src.services import AnalysisService, CompanyService, DartService, IngestionService
-
-
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger("IngestionRunner")
@@ -36,7 +38,7 @@ async def process_corp_pipeline(
         # 1. DART에서 최신 기업 정보 조회 (Live Data)
         corp_info = dart_svc.get_corp_by_code(corp_code)
         if not corp_info:
-            logger.warning(f"   ⚠️ Invalid corp_code: {corp_code} (Not found in DART list)")
+            logger.warning(f"   [WARNING] Invalid corp_code: {corp_code} (Not found in DART list)")
             return False
 
         dart_info = dart_svc.extract_company_info(corp_info)
@@ -71,12 +73,12 @@ async def process_corp_pipeline(
         # 5. Parse & Ingest Report Sections to Source Material
         raw_chunks = dart_svc.parse_report_sections(report)
         if not raw_chunks:
-            logger.warning(f"   ⚠️ No valid sections parsed for {company_name}")
+            logger.warning(f"   [WARNING] No valid sections parsed for {company_name}")
             return False
 
         saved_chunks = await ingest_svc.save_chunks(analysis_report.id, raw_chunks)
 
-        logger.info(f"   ✅ Success: Ingested {len(saved_chunks)} chunks for {company_name}")
+        logger.info(f"    Success: Ingested {len(saved_chunks)} chunks for {company_name}")
         return True
 
     except Exception as e:
@@ -120,7 +122,7 @@ async def run_pipeline(
             if corp:
                 final_targets.append(corp.corp_code)
             else:
-                logger.warning(f"   ⚠️ Stock code not found: {stock}")
+                logger.warning(f"   [WARNING] Stock code not found: {stock}")
 
     # [Case C] 아무것도 지정 안 함 -> 최근 보고서 제출 기업 자동 검색 (Default)
     if not final_targets:
