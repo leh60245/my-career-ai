@@ -5,11 +5,9 @@ Resume 도메인 테스트
 코칭(첨삭) 서비스는 LLM 의존성이 있어 API 레벨 테스트는 제외하고 DB 레이어만 검증.
 """
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.src.resume.models import ResumeItem, ResumeQuestion
 from backend.src.resume.repositories import ResumeItemRepository, ResumeQuestionRepository
 from backend.src.user.models import User
 
@@ -23,12 +21,14 @@ class TestResumeQuestionRepository:
     async def test_create_question_success(self, session: AsyncSession, job_seeker_user: User):
         """자소서 세트를 생성한다."""
         repo = ResumeQuestionRepository(session)
-        question = await repo.create({
-            "user_id": job_seeker_user.id,
-            "title": "삼성전자 SW 직군 자소서",
-            "applicant_type": "NEW",
-            "is_archived": False,
-        })
+        question = await repo.create(
+            {
+                "user_id": job_seeker_user.id,
+                "title": "삼성전자 SW 직군 자소서",
+                "applicant_type": "NEW",
+                "is_archived": False,
+            }
+        )
 
         assert question is not None
         assert question.id is not None
@@ -79,12 +79,9 @@ class TestResumeQuestionRepository:
         question = await q_repo.create(
             {"user_id": job_seeker_user.id, "title": "문항 포함 자소서", "is_archived": False}
         )
-        await i_repo.create({
-            "question_id": question.id,
-            "type": "MOTIVATION",
-            "content": "지원 동기를 서술하시오.",
-            "order_index": 0,
-        })
+        await i_repo.create(
+            {"question_id": question.id, "type": "MOTIVATION", "content": "지원 동기를 서술하시오.", "order_index": 0}
+        )
 
         # items 포함 조회
         loaded = await q_repo.get_with_items(question.id)
@@ -143,9 +140,7 @@ class TestResumeAPI:
     async def test_create_question_missing_title(self, client: AsyncClient, job_seeker_user: User):
         """POST /api/resume/questions — 제목 없으면 422 반환."""
         response = await client.post(
-            "/api/resume/questions",
-            params={"user_id": job_seeker_user.id},
-            json={"applicant_type": "NEW", "items": []},
+            "/api/resume/questions", params={"user_id": job_seeker_user.id}, json={"applicant_type": "NEW", "items": []}
         )
 
         assert response.status_code == 422

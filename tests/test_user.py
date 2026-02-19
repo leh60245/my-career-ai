@@ -5,7 +5,6 @@ User 계정 생성, 프로필 조회, 프로필 수정 등의 해피패스 및 �
 """
 
 import pytest
-import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -86,9 +85,7 @@ class TestUserAPI:
 
     async def test_register_user_success(self, client: AsyncClient):
         """POST /api/user/register — 사용자 생성 성공."""
-        response = await client.post(
-            "/api/user/register", json={"email": "apitest@example.com", "role": "JOB_SEEKER"}
-        )
+        response = await client.post("/api/user/register", json={"email": "apitest@example.com", "role": "JOB_SEEKER"})
 
         assert response.status_code == 201
         data = response.json()

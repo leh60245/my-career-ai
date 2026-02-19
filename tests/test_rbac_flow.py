@@ -10,11 +10,11 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.src.company.models.company import Company
-from backend.src.company.services.report_job_service import ReportJobService
-from backend.src.common.enums import ReportJobStatus, UserRole
+from backend.src.common.enums import ReportJobStatus
 from backend.src.common.middlewares.auth import check_admin_permission
 from backend.src.common.repositories.base_repository import EntityNotFound
+from backend.src.company.models.company import Company
+from backend.src.company.services.report_job_service import ReportJobService
 from backend.src.user.models import User
 
 
@@ -24,9 +24,7 @@ from backend.src.user.models import User
 class TestAnalysisRequestFlow:
     """기업 분석 요청 플로우 단위 테스트 (Service Layer)."""
 
-    async def test_submit_request_happy_path(
-        self, session: AsyncSession, job_seeker_user: User, test_company: Company
-    ):
+    async def test_submit_request_happy_path(self, session: AsyncSession, job_seeker_user: User, test_company: Company):
         """구직자가 분석 요청을 정상 등록하면 PENDING 상태로 저장된다."""
         service = ReportJobService.from_session(session)
 
@@ -130,9 +128,7 @@ class TestAnalysisRequestFlow:
         with pytest.raises(EntityNotFound):
             await service.approve_request(job_id, manager_user.id)
 
-    async def test_get_user_requests(
-        self, session: AsyncSession, job_seeker_user: User, test_company: Company
-    ):
+    async def test_get_user_requests(self, session: AsyncSession, job_seeker_user: User, test_company: Company):
         """구직자는 자신의 요청 목록을 조회할 수 있다."""
         service = ReportJobService.from_session(session)
 
@@ -147,9 +143,7 @@ class TestAnalysisRequestFlow:
         assert len(requests) >= 1
         assert any(r.id == job_id for r in requests)
 
-    async def test_get_pending_requests(
-        self, session: AsyncSession, job_seeker_user: User, test_company: Company
-    ):
+    async def test_get_pending_requests(self, session: AsyncSession, job_seeker_user: User, test_company: Company):
         """관리자는 대기 중인 모든 요청을 조회할 수 있다."""
         service = ReportJobService.from_session(session)
 
@@ -202,11 +196,7 @@ class TestAdminAPIProtection:
     """관리자 API 엔드포인트의 권한 방어 테스트."""
 
     async def test_approve_by_non_admin_returns_403(
-        self,
-        client: AsyncClient,
-        session: AsyncSession,
-        job_seeker_user: User,
-        test_company: Company,
+        self, client: AsyncClient, session: AsyncSession, job_seeker_user: User, test_company: Company
     ):
         """
         구직자가 직접 분석 승인 API를 호출하면 403 Forbidden이 반환된다.
@@ -226,18 +216,13 @@ class TestAdminAPIProtection:
 
         # 구직자 ID로 관리자 승인 API 호출 (권한 없음)
         response = await client.post(
-            f"/api/admin/analyze/{job_id}/approve",
-            json={"approved_by_user_id": job_seeker_user.id},
+            f"/api/admin/analyze/{job_id}/approve", json={"approved_by_user_id": job_seeker_user.id}
         )
 
         assert response.status_code == 403
 
     async def test_reject_by_non_admin_returns_403(
-        self,
-        client: AsyncClient,
-        session: AsyncSession,
-        job_seeker_user: User,
-        test_company: Company,
+        self, client: AsyncClient, session: AsyncSession, job_seeker_user: User, test_company: Company
     ):
         """
         구직자가 직접 분석 반려 API를 호출하면 403 Forbidden이 반환된다.
@@ -260,9 +245,7 @@ class TestAdminAPIProtection:
 
         assert response.status_code == 403
 
-    async def test_get_pending_requests_by_non_admin_returns_403(
-        self, client: AsyncClient, job_seeker_user: User
-    ):
+    async def test_get_pending_requests_by_non_admin_returns_403(self, client: AsyncClient, job_seeker_user: User):
         """구직자가 관리자용 대기 요청 목록 조회 시 403 반환."""
         response = await client.get("/api/admin/analyze/requests", params={"user_id": job_seeker_user.id})
 
@@ -277,11 +260,7 @@ class TestAdminAPIProtection:
         response = await client.post(
             "/api/company/analyze/request",
             params={"user_id": job_seeker_user.id},
-            json={
-                "company_id": test_company.id,
-                "company_name": test_company.company_name,
-                "topic": "채용정보",
-            },
+            json={"company_id": test_company.id, "company_name": test_company.company_name, "topic": "채용정보"},
         )
 
         assert response.status_code == 201
@@ -296,11 +275,7 @@ class TestAdminAPIProtection:
         """동일 기업 중복 요청 시 400 Bad Request 반환."""
         await session.flush()
 
-        payload = {
-            "company_id": test_company.id,
-            "company_name": test_company.company_name,
-            "topic": "채용정보",
-        }
+        payload = {"company_id": test_company.id, "company_name": test_company.company_name, "topic": "채용정보"}
         params = {"user_id": job_seeker_user.id}
 
         # 첫 번째 요청

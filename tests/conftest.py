@@ -7,18 +7,15 @@ pytest 공용 픽스처 모음
 - 개발/운영 DB에 데이터가 잔류하지 않음
 """
 
-import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
 
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.main import app
 from backend.src.common.config import DB_CONFIG
-from backend.src.common.models.base import Base
 
 
 # ============================================================

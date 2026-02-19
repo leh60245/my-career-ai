@@ -8,12 +8,10 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.src.common.enums import ReportJobStatus
 from backend.src.company.models.company import Company
-from backend.src.company.models.report_job import ReportJob
 from backend.src.company.services.company_service import CompanyService
 from backend.src.company.services.report_job_service import ReportJobService
-from backend.src.common.enums import ReportJobStatus
-from backend.src.common.repositories.base_repository import EntityNotFound
 from backend.src.user.models import User
 
 
@@ -27,11 +25,7 @@ class TestCompanyService:
         """새로운 기업을 등록한다."""
         service = CompanyService.from_session(session)
         company = await service.onboard_company(
-            corp_code="12345678",
-            company_name="신규기업주식회사",
-            stock_code=None,
-            sector="IT",
-            product="소프트웨어",
+            corp_code="12345678", company_name="신규기업주식회사", stock_code=None, sector="IT", product="소프트웨어"
         )
 
         assert company is not None
