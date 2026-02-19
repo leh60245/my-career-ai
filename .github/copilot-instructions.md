@@ -66,7 +66,7 @@ class MyService:
 ```bash
 # Backend (cd backend first, activate conda env 'enterprise-storm')
 conda activate enterprise-storm
-python -m uvicorn backend.main:app --reload --port 8000 --reload-dir src
+python -m uvicorn backend.main:app --reload --port 8000 --reload-dir backend/src
 alembic upgrade head                              # apply migrations
 alembic revision --autogenerate -m "description"  # generate migration
 
@@ -90,3 +90,8 @@ docker-compose up -d   # PostgreSQL (pgvector:pg15)
 - **AI Principle**: The Resume service focuses strictly on coaching, NOT ghostwriting, utilizing a Context-Aware Multi-Agent Framework.
 - **Encoding Rule**: Absolutely NO emojis are allowed in comments or logs to prevent UnicodeDecodeError issues.
 - **Environment Setup**: You must run conda activate enterprise-storm before executing any terminal commands.
+
+## Testing & Quality Assurance Guidelines
+- **Test Framework**: All business logic and APIs for the Python backend must have mandatory test cases authored using pytest.
+- **Test Coverage**: When adding or modifying features, tests must encompass both Happy Paths and Edge/Bad Cases, including validation for unauthorized access, invalid input, and exception handling.
+- **Isolation**: Database tests must ensure independence by utilizing in-memory (SQLite) databases or transaction-rollback-based fixtures to prevent any impact on actual data.
