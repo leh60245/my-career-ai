@@ -35,8 +35,8 @@ class ReportJob(Base, TimestampMixin):
     error_message: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Request & Approval Tracking
-    user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, comment="분석을 요청한 구직자의 user_id"
+    user_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, comment="분석을 요청한 구직자의 user_id"
     )
     requested_at: Mapped[str | None] = mapped_column(
         DateTime(timezone=True), nullable=True, comment="요청 시간 (TimestampMixin의 created_at과 별개로 추적)"

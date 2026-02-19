@@ -10,6 +10,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.src.common.enums import UserRole
+from backend.src.common.repositories.base_repository import EntityNotFound
 from backend.src.user.services import UserService
 
 
@@ -44,6 +45,8 @@ async def check_admin_permission(user_id: int, session: AsyncSession) -> None:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin permission required") from None
     except HTTPException:
         raise
+    except EntityNotFound:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from None
     except Exception as e:
         logger.error(f"Permission check failed for user {user_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Permission check failed") from e
