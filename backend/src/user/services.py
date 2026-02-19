@@ -33,6 +33,13 @@ class UserService:
         """AsyncSession으로부터 서비스 인스턴스를 생성한다."""
         return cls(user_repo=UserRepository(session), profile_repo=JobSeekerProfileRepository(session))
 
+    async def get_user(self, user_id: int) -> User:
+        """사용자 정보를 조회한다."""
+        user = await self.user_repo.get(user_id)
+        if not user:
+            raise EntityNotFound(f"User(id={user_id}) 이(가) 존재하지 않습니다.")
+        return user
+
     async def get_user_with_profile(self, user_id: int) -> User:
         """
         사용자 정보와 프로필을 함께 조회한다.

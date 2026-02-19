@@ -43,10 +43,11 @@ class AnalysisReportStatus(StrEnum):
 
 
 class ReportJobStatus(StrEnum):
-    PENDING = "PENDING"
-    PROCESSING = "PROCESSING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
+    PENDING = "PENDING"  # 분석 요청 대기 중
+    PROCESSING = "PROCESSING"  # 분석 진행 중
+    COMPLETED = "COMPLETED"  # 분석 완료
+    FAILED = "FAILED"  # 분석 실패
+    REJECTED = "REJECTED"  # 관리자 반려
 
 
 # ============================================================

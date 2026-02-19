@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import sys
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
+
+# sys.path에 프로젝트 루트 디렉토리 추가 (절대 임포트 지원)
+# __file__ = .../backend/src/common/database/migrations/env.py
+# parents[4] = .../backend/, parents[5] = .../ (프로젝트 루트)
+project_root = Path(__file__).resolve().parents[5]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 from backend.src.common.config import DB_CONFIG
 from backend.src.common.models.base import Base
 

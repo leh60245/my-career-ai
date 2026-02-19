@@ -1,0 +1,14 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.11.14, pytest-8.3.2, pluggy-1.6.0
+rootdir: C:\Users\remote\Project\enterprise-storm
+configfile: pytest.ini
+plugins: anyio-4.10.0, langsmith-0.6.2, asyncio-0.24.0, cov-4.1.0, mock-3.15.1
+asyncio: mode=Mode.AUTO, default_loop_scope=function
+collected 53 items
+
+tests\test_company.py ................                                   [ 30%]
+tests\test_rbac_flow.py ...............                                  [ 58%]
+tests\test_resume.py ...........                                         [ 79%]
+tests\test_user.py ...........                                           [100%]
+
+======================= 53 passed, 4 warnings in 6.43s ========================

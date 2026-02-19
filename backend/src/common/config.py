@@ -38,9 +38,9 @@ def get_env(key: str, default: Any = None, cast_to: type = str) -> Any:
     if value is None:
         return default
 
-    if cast_to == bool:
+    if cast_to is bool:
         return value.lower() in ("true", "1", "yes", "on")
-    if cast_to == list:
+    if cast_to is list:
         return [x.strip() for x in value.split(",") if x.strip()]
     try:
         return cast_to(value)
@@ -103,14 +103,14 @@ AI_CONFIG = {
     "openai_api_key": get_env("OPENAI_API_KEY"),
     "google_api_key": get_env("GOOGLE_API_KEY"),
     "azure_api_key": get_env("AZURE_API_KEY"),
-    "azure_api_base": get_env("AZURE_API_BASE"),  # [복구됨]
-    "azure_api_version": get_env("AZURE_API_VERSION"),  # [복구됨]
+    "azure_api_base": get_env("AZURE_API_BASE"),
+    "azure_api_version": get_env("AZURE_API_VERSION"),
     "serper_api_key": get_env("SERPER_API_KEY"),
     # Model & Retrieval
     "default_model": get_env("DEFAULT_LLM_MODEL", "gpt-4o"),
     "retrieval_top_k": get_env("RETRIEVAL_TOP_K", 5, int),
     "retrieval_min_score": get_env("RETRIEVAL_MIN_SCORE", 0.5, float),
-    "encoder_api_type": get_env("ENCODER_API_TYPE", "openai"),  # [복구됨]
+    "encoder_api_type": get_env("ENCODER_API_TYPE", "openai"),
     # Reranker
     "reranker_model": "BAAI/bge-reranker-v2-m3",
     "reranker_max_length": get_env("RERANKER_MAX_LENGTH", 1024, int),
@@ -118,7 +118,7 @@ AI_CONFIG = {
     "reranker_device": get_env("RERANKER_DEVICE", ""),
     # Storm Logic
     "storm_max_thread_num": get_env("STORM_MAX_THREAD_NUM", 2, int),
-    "storm_force_exit": get_env("STORM_FORCE_EXIT", False, bool),  # [복구됨]
+    "storm_force_exit": get_env("STORM_FORCE_EXIT", False, bool),
 }
 
 SERPER_CONFIG = {
@@ -138,13 +138,13 @@ DART_CONFIG = {
     "search_start_date": get_env("DART_SEARCH_START_DATE", "20240101"),
     "report_type_code": "a001",
     "page_count": 100,
-    "page_delay_sec": 0.5,  # [복구됨]
+    "page_delay_sec": 0.5,
     "max_search_days": 90,
 }
 
 BATCH_CONFIG = {
     "batch_size": get_env("BATCH_SIZE", 50, int),
-    "batch_delay_sec": get_env("BATCH_DELAY_SEC", 3, int),  # [복구됨]
+    "batch_delay_sec": get_env("BATCH_DELAY_SEC", 3, int),
     "request_delay_sec": get_env("REQUEST_DELAY_SEC", 0.1, float),
     "max_retries": get_env("MAX_RETRIES", 3, int),
     "retry_delay_sec": get_env("RETRY_DELAY_SEC", 5, int),
