@@ -66,7 +66,7 @@ class MyService:
 ```bash
 # Backend (cd backend first, activate conda env 'enterprise-storm')
 conda activate enterprise-storm
-python -m uvicorn main:app --reload --port 8000 --reload-dir src
+python -m uvicorn backend.main:app --reload --port 8000 --reload-dir src
 alembic upgrade head                              # apply migrations
 alembic revision --autogenerate -m "description"  # generate migration
 
@@ -75,7 +75,7 @@ npm run dev     # dev server
 npm run build   # production build
 
 # Infrastructure
-docker-compose up -d   # PostgreSQL (pgvector:pg15) + Ollama (GPU)
+docker-compose up -d   # PostgreSQL (pgvector:pg15)
 ```
 
 ## Key Gotchas
@@ -87,3 +87,6 @@ docker-compose up -d   # PostgreSQL (pgvector:pg15) + Ollama (GPU)
 - **ReportJob PK alias**: Python attribute `id` maps to DB column `job_id` via `mapped_column("job_id", ...)`.
 - **Ruff**: `line-length = 160`, `target-version = "py311"`. Config in `pyproject.toml`.
 - **Sensitive files**: Never commit `.env`, `functional_specification_documents/`, or `wishlist.md`.
+- **AI Principle**: The Resume service focuses strictly on coaching, NOT ghostwriting, utilizing a Context-Aware Multi-Agent Framework.
+- **Encoding Rule**: Absolutely NO emojis are allowed in comments or logs to prevent UnicodeDecodeError issues.
+- **Environment Setup**: You must run conda activate enterprise-storm before executing any terminal commands.
