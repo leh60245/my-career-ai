@@ -60,3 +60,45 @@ class ReportJobRepository(BaseRepository[ReportJob]):
         stmt = select(self.model).order_by(self.model.created_at.desc()).offset(offset).limit(limit)
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def get_by_user_id(self, user_id: int) -> Sequence[ReportJob]:
+        """특정 사용자가 요청한 모든 분석 요청 조회."""
+        stmt = select(self.model).where(self.model.user_id == user_id).order_by(self.model.created_at.desc())
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_pending_requests(self) -> Sequence[ReportJob]:
+        """관리자용: 대기 중인 분석 요청 조회 (승인 대기 상태)."""
+        stmt = (
+            select(self.model)
+            .where(self.model.status == ReportJobStatus.PENDING.value)
+            .order_by(self.model.created_at.asc())  # 먼저 요청된 것부터
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def check_duplicate_request(self, user_id: int, company_id: int) -> ReportJob | None:
+        """
+        사용자의 동일 기업에 대한 기존 요청이 있는지 확인.
+        PENDING(대기), PROCESSING(진행), COMPLETED(완료) 상태의 요청을 확인.
+        REJECTED와 FAILED는 무시.
+        """
+        from sqlalchemy import and_, or_
+
+        stmt = (
+            select(self.model)
+            .where(
+                and_(
+                    self.model.user_id == user_id,
+                    self.model.company_id == company_id,
+                    or_(
+                        self.model.status == ReportJobStatus.PENDING.value,
+                        self.model.status == ReportJobStatus.PROCESSING.value,
+                        self.model.status == ReportJobStatus.COMPLETED.value,
+                    ),
+                )
+            )
+            .order_by(self.model.created_at.desc())
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().first()

@@ -26,6 +26,12 @@ class UserRepository(BaseRepository[User]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(User, session)
 
+    async def get(self, user_id: int) -> User | None:
+        """기본 get 메서드 (프로필 미포함)"""
+        stmt = select(self.model).where(self.model.id == user_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_by_email(self, email: str) -> User | None:
         """
         이메일로 사용자를 조회한다.

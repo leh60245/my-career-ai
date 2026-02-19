@@ -13,13 +13,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.src.common.config import TOPICS
 from backend.src.common.database.connection import AsyncDatabaseEngine
+from backend.src.common.middlewares.auth import check_admin_permission
 from backend.src.company.schemas.company import CompanyResponse
 from backend.src.company.schemas.generated_report import (
     GeneratedReportListItem,
     GeneratedReportResponse,
     GenerateReportRequest,
 )
-from backend.src.company.schemas.report_job import ReportJobResponse, ReportListResponse, ReportSummary
+from backend.src.company.schemas.report_job import (
+    AdminAnalysisRequestResponse,
+    AdminAnalysisRequestsResponse,
+    AdminApproveRequest,
+    AdminRejectRequest,
+    CompanyAnalysisRequestCreate,
+    CompanyAnalysisRequestResponse,
+    ReportJobResponse,
+    ReportListResponse,
+    ReportSummary,
+)
 from backend.src.company.services.company_service import CompanyService
 from backend.src.company.services.generated_report_service import GeneratedReportService
 from backend.src.company.services.report_job_service import ReportJobService
@@ -225,3 +236,157 @@ async def list_reports(
     total, jobs = await job_service.list_jobs(limit=limit, offset=offset)
     summaries = [ReportSummary.model_validate(job) for job in jobs]
     return ReportListResponse(total=total, reports=summaries)
+
+
+# ============================================================
+# 기업 분석 요청 플로우 (구직자 <-> 관리자)
+# ============================================================
+@router.post("/company/analyze/request", response_model=CompanyAnalysisRequestResponse, status_code=201)
+async def submit_analysis_request(
+    request: CompanyAnalysisRequestCreate, user_id: int, job_service: ReportJobService = Depends(get_report_job_service)
+) -> CompanyAnalysisRequestResponse:
+    """
+    구직자가 기업 분석을 요청합니다.
+
+    Happy Path:
+    - 사용자가 로그인 상태에서 분석 요청
+    - 중복 요청 여부 확인 후 PENDING 상태로 저장
+    - job_id 반환
+
+    Edge Cases:
+    - user_id가 없으면 401 Unauthorized
+    - 동일 기업에 대한 미완료 요청이 있으면 400 Bad Request
+    """
+    from backend.src.common.repositories.base_repository import EntityNotFound
+
+    try:
+        job_id = await job_service.submit_analysis_request(
+            user_id=user_id, company_id=request.company_id, company_name=request.company_name, topic=request.topic
+        )
+    except EntityNotFound as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+
+    job = await job_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=500, detail="Job created but not found in DB")
+
+    return CompanyAnalysisRequestResponse.model_validate(job)
+
+
+@router.get("/company/analyze/requests", response_model=list[CompanyAnalysisRequestResponse])
+async def get_user_analysis_requests(
+    user_id: int, job_service: ReportJobService = Depends(get_report_job_service)
+) -> list[CompanyAnalysisRequestResponse]:
+    """
+    구직자의 모든 분석 요청을 조회합니다.
+
+    요청 상태를 확인하여 대기 / 진행 / 완료 / 반려 중 어느 상태인지 확인할 수 있습니다.
+
+    Args:
+        user_id: 사용자의 ID (JWT 토큰에서 추출)
+
+    Returns:
+        사용자가 요청한 모든 분석 요청 목록 (최신순)
+    """
+    jobs = await job_service.get_user_requests(user_id)
+    return [CompanyAnalysisRequestResponse.model_validate(job) for job in jobs]
+
+
+@router.get("/admin/analyze/requests", response_model=AdminAnalysisRequestsResponse)
+async def get_pending_analysis_requests(
+    user_id: int,
+    session: AsyncSession = Depends(get_session),
+    job_service: ReportJobService = Depends(get_report_job_service),
+) -> AdminAnalysisRequestsResponse:
+    """
+    관리자: 승인 대기 중인 모든 분석 요청을 조회합니다.
+
+    관리자만 접근 가능합니다. 권한 검증은 백엔드에서 엄격히 처리됩니다.
+
+    Args:
+        user_id: 관리자의 ID (권한 검증용)
+
+    Returns:
+        승인 대기 중인 요청 목록 (먼저 요청된 순)
+
+    Raises:
+        403 Forbidden: 관리자 권한이 없을 경우
+    """
+    # 관리자 권한 검증
+    await check_admin_permission(user_id, session)
+
+    jobs = await job_service.get_pending_requests()
+    total = len(jobs)
+    requests_list = [AdminAnalysisRequestResponse.model_validate(job) for job in jobs]
+    return AdminAnalysisRequestsResponse(total=total, requests=requests_list)
+
+
+@router.post("/admin/analyze/{job_id}/approve", status_code=204)
+async def approve_analysis_request(
+    job_id: str,
+    request: AdminApproveRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+    job_service: ReportJobService = Depends(get_report_job_service),
+) -> None:
+    """
+    관리자가 분석 요청을 승인합니다.
+
+    관리자만 접근 가능합니다. 승인 후 PROCESSING 상태로 변경되고 백그라운드에서 분석이 시작됩니다.
+
+    Args:
+        job_id: 승인할 요청 ID
+        request: 승인 정보 (관리자 ID)
+
+    Raises:
+        403 Forbidden: 관리자 권한이 없을 경우
+        404 Not Found: 요청이 없거나 이미 처리된 경우
+    """
+    # 관리자 권한 검증
+    await check_admin_permission(request.approved_by_user_id, session)
+
+    from backend.src.common.repositories.base_repository import EntityNotFound
+
+    try:
+        await job_service.approve_request(job_id, request.approved_by_user_id)
+        # 리포트 생성 파이프라인 트리거
+        # 기존 report_jobs 처리 로직과 통합
+        job = await job_service.get_job(job_id)
+        if job:
+            background_tasks.add_task(
+                storm_service.run_pipeline, job_id=job_id, company_name=job.company_name, topic=job.topic
+            )
+    except EntityNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
+
+
+@router.post("/admin/analyze/{job_id}/reject", status_code=204)
+async def reject_analysis_request(
+    job_id: str,
+    request: AdminRejectRequest,
+    session: AsyncSession = Depends(get_session),
+    job_service: ReportJobService = Depends(get_report_job_service),
+) -> None:
+    """
+    관리자가 분석 요청을 반려합니다.
+
+    관리자만 접근 가능합니다. 반려 후 REJECTED 상태로 변경되고 반려 사유가 저장됩니다.
+    구직자는 반려 사유를 확인할 수 있습니다.
+
+    Args:
+        job_id: 반려할 요청 ID
+        request: 반려 정보 (관리자 ID, 사유)
+
+    Raises:
+        403 Forbidden: 관리자 권한이 없을 경우
+        404 Not Found: 요청이 없거나 이미 처리된 경우
+    """
+    # 관리자 권한 검증
+    await check_admin_permission(request.approved_by_user_id, session)
+
+    from backend.src.common.repositories.base_repository import EntityNotFound
+
+    try:
+        await job_service.reject_request(job_id, request.approved_by_user_id, request.rejection_reason)
+    except EntityNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None

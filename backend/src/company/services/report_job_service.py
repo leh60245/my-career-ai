@@ -1,6 +1,7 @@
 import logging
 import uuid
 from collections.abc import Sequence
+from datetime import UTC
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -92,3 +93,143 @@ class ReportJobService:
         total = await self.repository.count()
         jobs = await self.repository.list_recent(limit=limit, offset=offset)
         return total, list(jobs)
+
+    # ============================================================
+    # 기업 분석 요청 플로우 (구직자 <-> 관리자)
+    # ============================================================
+
+    async def submit_analysis_request(self, user_id: int, company_id: int, company_name: str, topic: str) -> str:
+        """
+        구직자의 기업 분석 요청 등록.
+
+        중복 요청 방지: 동일 기업에 대한 미완료 요청이 있으면 EntityNotFound 예외 발생.
+
+        Args:
+            user_id: 요청한 구직자의 user_id
+            company_id: 분석을 요청한 기업의 company_id
+            company_name: 기업명
+            topic: 분석 주제
+
+        Returns:
+            생성된 job_id
+
+        Raises:
+            DuplicateEntity: 동일 기업에 대한 미완료 요청이 있을 경우
+        """
+        from datetime import datetime
+
+        # 중복 요청 확인
+        existing = await self.repository.check_duplicate_request(user_id, company_id)
+        if existing:
+            from backend.src.common.repositories.base_repository import EntityNotFound
+
+            raise EntityNotFound(
+                f"동일 기업에 대한 요청이 이미 진행 중입니다 (상태: {existing.status}, ID: {existing.id})"
+            )
+
+        # 새로운 분석 요청 생성
+        job_id = str(uuid.uuid4())
+        now = datetime.now(UTC)
+
+        job_data = {
+            "id": job_id,
+            "company_id": company_id,
+            "company_name": company_name,
+            "topic": topic,
+            "status": ReportJobStatus.PENDING,
+            "user_id": user_id,
+            "requested_at": now,
+            "error_message": None,
+        }
+
+        await self.repository.create(job_data)
+        logger.info(f"🆕 Analysis Request Created: {job_id} ({company_name} - {topic}) by user_id={user_id}")
+        return job_id
+
+    async def approve_request(self, job_id: str, approved_by_user_id: int) -> None:
+        """
+        관리자의 분석 요청 승인.
+
+        Args:
+            job_id: 승인할 요청 ID
+            approved_by_user_id: 승인한 관리자의 user_id
+
+        Raises:
+            EntityNotFound: 요청이 없거나 이미 처리된 경우
+        """
+        from datetime import datetime
+
+        job = await self.repository.get(job_id)
+        if not job:
+            from backend.src.common.repositories.base_repository import EntityNotFound
+
+            raise EntityNotFound(f"Job not found: {job_id}")
+
+        if job.status != ReportJobStatus.PENDING:
+            from backend.src.common.repositories.base_repository import EntityNotFound
+
+            raise EntityNotFound(f"Job is not in PENDING state: {job_id} (status: {job.status})")
+
+        now = datetime.now(UTC)
+        await self.repository.update(
+            job_id, {"status": ReportJobStatus.PROCESSING, "approved_by": approved_by_user_id, "approved_at": now}
+        )
+        logger.info(f"✅ Analysis Request Approved: {job_id} by admin_id={approved_by_user_id}")
+
+    async def reject_request(self, job_id: str, approved_by_user_id: int, rejection_reason: str) -> None:
+        """
+        관리자의 분석 요청 반려.
+
+        Args:
+            job_id: 반려할 요청 ID
+            approved_by_user_id: 반려한 관리자의 user_id
+            rejection_reason: 반려 사유
+
+        Raises:
+            EntityNotFound: 요청이 없거나 이미 처리된 경우
+        """
+        from datetime import datetime
+
+        job = await self.repository.get(job_id)
+        if not job:
+            from backend.src.common.repositories.base_repository import EntityNotFound
+
+            raise EntityNotFound(f"Job not found: {job_id}")
+
+        if job.status != ReportJobStatus.PENDING:
+            from backend.src.common.repositories.base_repository import EntityNotFound
+
+            raise EntityNotFound(f"Job is not in PENDING state: {job_id} (status: {job.status})")
+
+        now = datetime.now(UTC)
+        await self.repository.update(
+            job_id,
+            {
+                "status": ReportJobStatus.REJECTED,
+                "approved_by": approved_by_user_id,
+                "rejected_at": now,
+                "rejection_reason": rejection_reason,
+            },
+        )
+        logger.info(f"❌ Analysis Request Rejected: {job_id} by admin_id={approved_by_user_id} - {rejection_reason}")
+
+    async def get_user_requests(self, user_id: int) -> Sequence[ReportJob]:
+        """
+        구직자의 모든 분석 요청 조회.
+
+        Args:
+            user_id: 구직자의 user_id
+
+        Returns:
+            사용자의 분석 요청 목록 (최신순)
+        """
+        return await self.repository.get_by_user_id(user_id)
+
+    async def get_pending_requests(self) -> Sequence[ReportJob]:
+        """
+        관리자용: 승인 대기 중인 모든 분석 요청 조회.
+
+        Returns:
+            승인 대기 중인 요청 목록 (먼저 요청된 순)
+        """
+        return await self.repository.get_pending_requests()
