@@ -44,13 +44,13 @@ class ReportJobService:
         }
 
         await self.repository.create(job_data)
-        logger.info(f"🆕 Job Created: {job_id} ({company_name} - {topic})")
+        logger.info(f"Job Created: {job_id} ({company_name} - {topic})")
         return job_id
 
     async def start_job(self, job_id: str) -> None:
         """작업 상태를 PROCESSING으로 변경"""
         await self.repository.update(job_id, {"status": ReportJobStatus.PROCESSING})
-        logger.info(f"▶️ Job Started: {job_id}")
+        logger.info(f"Job Started: {job_id}")
 
     async def complete_job(self, job_id: str) -> None:
         """작업 상태를 COMPLETED로 변경"""
@@ -71,7 +71,7 @@ class ReportJobService:
         safe_message = error_message[:2000] if error_message else "Unknown Error"
 
         await self.repository.update(job_id, {"status": ReportJobStatus.FAILED, "error_message": safe_message})
-        logger.error(f"❌ Job Failed: {job_id} - {safe_message}")
+        logger.error(f"Job Failed: {job_id} - {safe_message}")
 
     async def get_job(self, job_id: str) -> ReportJob | None:
         """작업 상세 조회"""
@@ -98,11 +98,11 @@ class ReportJobService:
     # 기업 분석 요청 플로우 (구직자 <-> 관리자)
     # ============================================================
 
-    async def submit_analysis_request(self, user_id: int, company_id: int, company_name: str, topic: str) -> str:
+    async def submit_analysis_request(self, user_id: int, company_id: int | None, company_name: str, topic: str) -> str:
         """
         구직자의 기업 분석 요청 등록.
 
-        중복 요청 방지: 동일 기업에 대한 미완료 요청이 있으면 EntityNotFound 예외 발생.
+        중복 요청 방지: 동일 기업에 대한 미완료 요청이 있으면 DuplicateEntity 예외 발생.
 
         Args:
             user_id: 요청한 구직자의 user_id
@@ -119,11 +119,11 @@ class ReportJobService:
         from datetime import datetime
 
         # 중복 요청 확인
-        existing = await self.repository.check_duplicate_request(user_id, company_id)
+        existing = await self.repository.check_duplicate_request(user_id, company_id, company_name)
         if existing:
-            from backend.src.common.repositories.base_repository import EntityNotFound
+            from backend.src.common.repositories.base_repository import DuplicateEntity
 
-            raise EntityNotFound(
+            raise DuplicateEntity(
                 f"동일 기업에 대한 요청이 이미 진행 중입니다 (상태: {existing.status}, ID: {existing.id})"
             )
 
@@ -143,7 +143,7 @@ class ReportJobService:
         }
 
         await self.repository.create(job_data)
-        logger.info(f"🆕 Analysis Request Created: {job_id} ({company_name} - {topic}) by user_id={user_id}")
+        logger.info(f"Analysis Request Created: {job_id} ({company_name} - {topic}) by user_id={user_id}")
         return job_id
 
     async def approve_request(self, job_id: str, approved_by_user_id: int) -> None:
@@ -174,7 +174,7 @@ class ReportJobService:
         await self.repository.update(
             job_id, {"status": ReportJobStatus.PROCESSING, "approved_by": approved_by_user_id, "approved_at": now}
         )
-        logger.info(f"✅ Analysis Request Approved: {job_id} by admin_id={approved_by_user_id}")
+        logger.info(f"Analysis Request Approved: {job_id} by admin_id={approved_by_user_id}")
 
     async def reject_request(self, job_id: str, approved_by_user_id: int, rejection_reason: str) -> None:
         """
@@ -211,7 +211,7 @@ class ReportJobService:
                 "rejection_reason": rejection_reason,
             },
         )
-        logger.info(f"❌ Analysis Request Rejected: {job_id} by admin_id={approved_by_user_id} - {rejection_reason}")
+        logger.info(f"Analysis Request Rejected: {job_id} by admin_id={approved_by_user_id} - {rejection_reason}")
 
     async def get_user_requests(self, user_id: int) -> Sequence[ReportJob]:
         """
@@ -233,3 +233,24 @@ class ReportJobService:
             승인 대기 중인 요청 목록 (먼저 요청된 순)
         """
         return await self.repository.get_pending_requests()
+
+    async def recover_interrupted_jobs(self) -> int:
+        """
+        서버 재시작 시 PROCESSING 상태로 남아있는 중단된 잡을 FAILED로 복구한다.
+
+        Ctrl+C, 서버 강제 종료, 프로세스 크래시 등으로 인해 PROCESSING 상태에서
+        정상 완료 처리가 되지 않은 잡들을 탐지하고 FAILED로 전환한다.
+
+        Returns:
+            복구된 잡의 수
+        """
+        stuck_jobs = await self.repository.get_stuck_processing_jobs()
+        if not stuck_jobs:
+            return 0
+
+        job_ids = [job.id for job in stuck_jobs]
+        count = await self.repository.bulk_mark_failed(
+            job_ids, error_message="서버 재시작으로 인한 분석 중단. 관리자에게 재요청 또는 재시도가 필요합니다."
+        )
+        logger.warning("서버 재시작 후 중단된 잡 %d개를 FAILED로 복구: %s", count, job_ids)
+        return count

@@ -9,6 +9,7 @@ import logging
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.src.common.config import TOPICS
@@ -35,6 +36,7 @@ from backend.src.company.services.company_service import CompanyService
 from backend.src.company.services.generated_report_service import GeneratedReportService
 from backend.src.company.services.report_job_service import ReportJobService
 from backend.src.company.services.storm_service import StormService
+from backend.src.user.services import UserService
 
 
 logger = logging.getLogger(__name__)
@@ -243,7 +245,10 @@ async def list_reports(
 # ============================================================
 @router.post("/company/analyze/request", response_model=CompanyAnalysisRequestResponse, status_code=201)
 async def submit_analysis_request(
-    request: CompanyAnalysisRequestCreate, user_id: int, job_service: ReportJobService = Depends(get_report_job_service)
+    request: CompanyAnalysisRequestCreate,
+    user_id: int,
+    session: AsyncSession = Depends(get_session),
+    job_service: ReportJobService = Depends(get_report_job_service),
 ) -> CompanyAnalysisRequestResponse:
     """
     구직자가 기업 분석을 요청합니다.
@@ -257,13 +262,20 @@ async def submit_analysis_request(
     - user_id가 없으면 401 Unauthorized
     - 동일 기업에 대한 미완료 요청이 있으면 400 Bad Request
     """
-    from backend.src.common.repositories.base_repository import EntityNotFound
+    from backend.src.common.repositories.base_repository import DuplicateEntity, EntityNotFound
+
+    # 요청 사용자 유효성 검증 (FK 에러를 500으로 노출하지 않기 위해 사전 검사)
+    try:
+        user_service = UserService.from_session(session)
+        await user_service.get_user(user_id)
+    except EntityNotFound:
+        raise HTTPException(status_code=401, detail="Invalid user_id") from None
 
     try:
         job_id = await job_service.submit_analysis_request(
             user_id=user_id, company_id=request.company_id, company_name=request.company_name, topic=request.topic
         )
-    except EntityNotFound as e:
+    except DuplicateEntity as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
 
     job = await job_service.get_job(job_id)
@@ -289,7 +301,13 @@ async def get_user_analysis_requests(
         사용자가 요청한 모든 분석 요청 목록 (최신순)
     """
     jobs = await job_service.get_user_requests(user_id)
-    return [CompanyAnalysisRequestResponse.model_validate(job) for job in jobs]
+    results: list[CompanyAnalysisRequestResponse] = []
+    for job in jobs:
+        try:
+            results.append(CompanyAnalysisRequestResponse.model_validate(job))
+        except ValidationError as exc:
+            logger.warning("[job=%s] 직렬화 실패, 해당 job 제외: %s", job.id, exc)
+    return results
 
 
 @router.get("/admin/analyze/requests", response_model=AdminAnalysisRequestsResponse)
@@ -316,9 +334,17 @@ async def get_pending_analysis_requests(
     await check_admin_permission(user_id, session)
 
     jobs = await job_service.get_pending_requests()
-    total = len(jobs)
-    requests_list = [AdminAnalysisRequestResponse.model_validate(job) for job in jobs]
-    return AdminAnalysisRequestsResponse(total=total, requests=requests_list)
+    requests_list: list[AdminAnalysisRequestResponse] = []
+    skipped = 0
+    for job in jobs:
+        try:
+            requests_list.append(AdminAnalysisRequestResponse.model_validate(job))
+        except ValidationError as exc:
+            skipped += 1
+            logger.warning("[job=%s] 관리자 대시보드 직렬화 실패 (누락된 필드 가능성), 해당 job 제외: %s", job.id, exc)
+    if skipped:
+        logger.warning("관리자 대시보드: 직렬화 실패로 %d개 job 제외됨", skipped)
+    return AdminAnalysisRequestsResponse(total=len(requests_list), requests=requests_list)
 
 
 @router.post("/admin/analyze/{job_id}/approve", status_code=204)

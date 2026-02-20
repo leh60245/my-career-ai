@@ -45,10 +45,25 @@ app.add_middleware(
 # ============================================================
 @app.on_event("startup")
 async def startup_event() -> None:
-    """애플리케이션 시작 시 DB 커넥션 풀 워밍업."""
-    logger.info("🚀 Starting My Career AI API v5.0...")
+    """애플리케이션 시작 시 DB 커넥션 풀 워밍업 및 중단된 잡 복구."""
+    logger.info("Starting My Career AI API v5.0...")
     await db_engine.initialize()
-    logger.info("✓ Database ready")
+    logger.info("Database ready")
+
+    # 서버 재시작 전 PROCESSING 상태로 남아있던 중단된 잡을 FAILED 처리
+    try:
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from backend.src.company.services.report_job_service import ReportJobService
+
+        async with AsyncSession(db_engine.engine) as session:
+            recovered = await ReportJobService.from_session(session).recover_interrupted_jobs()
+            if recovered:
+                logger.warning("서버 재시작: %d개의 중단된 PROCESSING 잡을 FAILED로 복구했습니다.", recovered)
+            else:
+                logger.info("서버 재시작: 복구가 필요한 중단된 잡 없음.")
+    except Exception as e:
+        logger.warning("중단된 잡 복구 중 오류 (서버 시작은 계속): %s", e)
 
 
 @app.on_event("shutdown")

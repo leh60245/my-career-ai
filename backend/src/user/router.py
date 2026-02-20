@@ -64,6 +64,19 @@ async def get_me(user_id: int, service: UserService = Depends(get_user_service))
     return UserMeResponse(user=UserResponse.model_validate(user), job_seeker_profile=profile_resp)
 
 
+@router.get("/by-email", response_model=UserResponse, summary="이메일로 사용자 조회 (개발/테스트용)")
+async def get_user_by_email(email: str, service: UserService = Depends(get_user_service)) -> UserResponse:
+    """
+    이메일로 사용자를 조회한다.
+
+    Mock Auth 환경에서 프론트가 DB user_id를 동기화할 때 사용한다.
+    """
+    user = await service.user_repo.get_by_email(email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found") from None
+    return UserResponse.model_validate(user)
+
+
 @router.put("/profile", status_code=204, summary="구직자 프로필 수정")
 async def update_profile(
     user_id: int,
