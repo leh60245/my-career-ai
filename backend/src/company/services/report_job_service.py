@@ -73,6 +73,25 @@ class ReportJobService:
         await self.repository.update(job_id, {"status": ReportJobStatus.FAILED, "error_message": safe_message})
         logger.error(f"Job Failed: {job_id} - {safe_message}")
 
+    async def reject_job(self, job_id: str, rejection_reason: str) -> None:
+        """
+        작업 상태를 REJECTED로 변경하고 반려 사유를 저장합니다.
+        Career Pipeline에서 LLM JSON 생성 최종 실패 시 호출됩니다.
+
+        Args:
+            job_id: 반려할 작업 ID
+            rejection_reason: 반려 사유
+        """
+        from datetime import datetime
+
+        safe_reason = rejection_reason[:2000] if rejection_reason else "Unknown Rejection Reason"
+        now = datetime.now(UTC)
+
+        await self.repository.update(
+            job_id, {"status": ReportJobStatus.REJECTED, "rejection_reason": safe_reason, "rejected_at": now}
+        )
+        logger.warning(f"Job Rejected: {job_id} - {safe_reason}")
+
     async def get_job(self, job_id: str) -> ReportJob | None:
         """작업 상세 조회"""
         return await self.repository.get(job_id)

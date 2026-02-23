@@ -63,26 +63,52 @@ class StormService:
             "report_id": None,
         }
 
-        logger.info(f"🆕 [StormService] Job registered: {job_id} ({company_name})")
+        logger.info(f"[StormService] Job registered: {job_id} ({company_name})")
         return job_id
 
     async def run_pipeline(self, job_id: str, company_name: str, topic: str, model_provider: str = "openai") -> None:
         """
         Background Task로 실행됩니다.
-        src.company.engine.storm_pipeline에 모든 실행을 위임합니다.
+        Career Pipeline(고정 페르소나 기반)에 모든 실행을 위임합니다.
+
+        변경사항 (v1.1):
+            - 기존 STORMWikiRunner 기반 동적 파이프라인을 완전히 우회합니다.
+            - 고정 3 페르소나 + 하드코딩 쿼리 큐 기반 Career Pipeline을 사용합니다.
+            - LLM 출력은 Markdown이 아닌 순수 JSON 형태입니다.
         """
-        logger.info(f"🔄 [StormService] Delegating pipeline for job {job_id} ({company_name})")
+        logger.info(f"[StormService] Career Pipeline 위임: job {job_id} ({company_name})")
 
         try:
-            # Lazy import: knowledge_storm + torch 등 무거운 의존성을 서버 시작 시가 아닌
-            # 파이프라인 실행 시점에만 로드합니다.
+            # Lazy import: 무거운 의존성을 실행 시점에만 로드합니다.
+            from backend.src.company.engine.career_pipeline import run_career_pipeline
+
+            await run_career_pipeline(
+                job_id=job_id, company_name=company_name, topic=topic, jobs_dict=JOBS, model_provider=model_provider
+            )
+        except Exception as e:
+            logger.error(f"[StormService] Pipeline failed for {job_id} ({company_name}): {e}")
+            if job_id in JOBS:
+                JOBS[job_id]["status"] = ReportJobStatus.FAILED.value
+                JOBS[job_id]["message"] = str(e)
+                JOBS[job_id]["progress"] = 0
+
+    async def run_legacy_pipeline(
+        self, job_id: str, company_name: str, topic: str, model_provider: str = "openai"
+    ) -> None:
+        """
+        [레거시] 기존 STORMWikiRunner 기반 파이프라인.
+        하위 호환성 유지 또는 비교 테스트 용도로만 사용합니다.
+        """
+        logger.info(f"[StormService] Legacy STORM Pipeline 위임: job {job_id} ({company_name})")
+
+        try:
             from backend.src.company.engine.storm_pipeline import run_storm_pipeline
 
             await run_storm_pipeline(
                 job_id=job_id, company_name=company_name, topic=topic, jobs_dict=JOBS, model_provider=model_provider
             )
         except Exception as e:
-            logger.error(f"❌ [StormService] Pipeline failed for {job_id} ({company_name}): {e}")
+            logger.error(f"[StormService] Legacy pipeline failed for {job_id} ({company_name}): {e}")
             if job_id in JOBS:
                 JOBS[job_id]["status"] = ReportJobStatus.FAILED.value
                 JOBS[job_id]["message"] = str(e)
