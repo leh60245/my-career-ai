@@ -38,3 +38,4 @@ functional_specification_documents/
 
 # 기타
 docs/DECISIONS*.md
+golden_dataset/

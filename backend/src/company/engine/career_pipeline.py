@@ -24,8 +24,10 @@ from typing import Any
 from backend.src.common.config import AI_CONFIG
 from backend.src.common.database.connection import AsyncDatabaseEngine
 from backend.src.common.enums import ReportJobStatus
+from backend.src.company.engine.evaluator import evaluate_report
 from backend.src.company.engine.json_utils import build_retry_prompt, safe_parse_career_report
 from backend.src.company.engine.personas import ALL_PERSONAS, FINAL_SYNTHESIS_PROMPT, build_query_queue
+from backend.src.company.engine.refiner import force_delete_hallucinations, refine_report
 from backend.src.company.repositories.company_repository import CompanyRepository
 from backend.src.company.repositories.report_job_repository import ReportJobRepository
 from backend.src.company.services.report_job_service import ReportJobService
@@ -37,6 +39,8 @@ logger = logging.getLogger(__name__)
 
 # 재시도 횟수 상수
 MAX_LLM_RETRIES = 2
+# NLI 검증 루프 최대 반복 횟수
+MAX_VERIFICATION_LOOPS = 2
 
 
 async def run_career_pipeline(
@@ -169,7 +173,25 @@ async def run_career_pipeline(
             else:
                 logger.error(f"[{job_id}] 최대 재시도 횟수 초과. 파이프라인 종료.")
 
-        jobs_dict[job_id]["progress"] = 80
+        jobs_dict[job_id]["progress"] = 75
+
+        # ================================================================
+        # Phase 4.5: NLI 팩트체크 검증 루프 (Evaluator + Refiner)
+        # ================================================================
+        if report_json is not None:
+            report_json, verification_log = await _run_verification_loop(
+                report_json=report_json,
+                source_context=context_text,
+                company_name=company_name,
+                model_provider=model_provider,
+                job_id=job_id,
+                jobs_dict=jobs_dict,
+            )
+            logger.info(f"[{job_id}] NLI 검증 루프 완료: {verification_log.get('total_loops', 0)}회 반복")
+        else:
+            verification_log = {}
+
+        jobs_dict[job_id]["progress"] = 85
 
         # ================================================================
         # Phase 5: 결과 저장 및 상태 업데이트
@@ -201,11 +223,12 @@ async def run_career_pipeline(
             {
                 "job_id": job_id,
                 "topic": topic,
-                "pipeline": "career_pipeline_v1.1",
+                "pipeline": "career_pipeline_v1.2",
                 "personas": [p.name for p in ALL_PERSONAS],
                 "total_queries": len(processed_queries),
                 "total_search_results": len(all_search_results),
                 "model_provider": model_provider,
+                "verification_loops": verification_log.get("total_loops", 0),
             },
         )
 
@@ -213,6 +236,12 @@ async def run_career_pipeline(
         json_output_path = os.path.join(output_dir, "career_analysis_report.json")
         with open(json_output_path, "w", encoding="utf-8") as f:
             f.write(report_content_json)
+
+        # NLI 검증 로그 저장
+        if verification_log:
+            verification_log_path = os.path.join(output_dir, "verification_log.json")
+            with open(verification_log_path, "w", encoding="utf-8") as f:
+                json.dump(verification_log, f, ensure_ascii=False, indent=2)
 
         # 검색 로그 저장
         search_log_path = os.path.join(output_dir, "search_log.json")
@@ -241,9 +270,13 @@ async def run_career_pipeline(
                 report_content=report_content_json,
                 toc_text=_generate_toc_from_report(report_json),
                 references_data=_extract_references(all_search_results),
-                conversation_log={"pipeline": "career_pipeline_v1.1", "search_queries": processed_queries},
+                conversation_log={
+                    "pipeline": "career_pipeline_v1.2",
+                    "search_queries": processed_queries,
+                    "verification_log": verification_log,
+                },
                 model_name=model_provider,
-                meta_info={"job_id": job_id, "file_path": output_dir, "pipeline_version": "v1.1"},
+                meta_info={"job_id": job_id, "file_path": output_dir, "pipeline_version": "v1.2"},
             )
 
             if report_id is None:
@@ -504,3 +537,147 @@ def _extract_references(all_search_results: list[dict]) -> dict[str, Any]:
         refs[f"ref_{len(refs) + 1}"] = {"url": url, "title": title}
 
     return refs
+
+
+# ============================================================
+# NLI 팩트체크 검증 루프
+# ============================================================
+
+
+async def _run_verification_loop(
+    report_json,
+    source_context: str,
+    company_name: str,
+    model_provider: str,
+    job_id: str,
+    jobs_dict: dict[str, dict[str, Any]],
+) -> tuple[Any, dict[str, Any]]:
+    """
+    NLI 기반 팩트체크 검증 루프를 실행합니다.
+
+    3단계 검증 루프:
+        1차 JSON 초안 -> Evaluator의 NLI 환각 탐지 ->
+        Refiner의 자동 교정 -> 최종 정제된 JSON 반환
+
+    루프 제한: 최대 MAX_VERIFICATION_LOOPS(2)회 반복
+    강제 삭제: 2회 반복 후에도 환각이 남아있으면 해당 문장 강제 삭제
+
+    Args:
+        report_json: CareerAnalysisReport Pydantic 객체
+        source_context: 원천 검색 데이터 컨텍스트
+        company_name: 분석 대상 기업명
+        model_provider: LLM 프로바이더
+        job_id: Job UUID
+        jobs_dict: 메모리 기반 상태 관리 딕셔너리
+
+    Returns:
+        (정제된 CareerAnalysisReport, 검증 로그 딕셔너리)
+    """
+    from backend.src.company.schemas.career_report import CareerAnalysisReport
+
+    verification_log: dict[str, Any] = {"total_loops": 0, "loops": [], "final_action": "none"}
+
+    current_report = report_json
+
+    for loop_num in range(1, MAX_VERIFICATION_LOOPS + 1):
+        logger.info(f"[{job_id}] NLI 검증 루프 {loop_num}/{MAX_VERIFICATION_LOOPS} 시작")
+
+        # 현재 리포트를 JSON 문자열로 변환
+        current_json_str = current_report.model_dump_json(ensure_ascii=False, indent=2)
+
+        # --- Evaluator 호출 ---
+        try:
+            evaluation = await evaluate_report(
+                draft_json=current_json_str,
+                source_context=source_context,
+                company_name=company_name,
+                model_provider=model_provider,
+            )
+        except Exception as e:
+            logger.error(f"[{job_id}] Evaluator 호출 실패 (루프 {loop_num}): {e}")
+            verification_log["loops"].append({"loop": loop_num, "evaluator_error": str(e), "action": "skip"})
+            break
+
+        loop_log: dict[str, Any] = {
+            "loop": loop_num,
+            "has_hallucination": evaluation.has_hallucination,
+            "findings_count": len(evaluation.findings),
+            "findings": [f.model_dump() for f in evaluation.findings],
+            "summary": evaluation.summary,
+        }
+
+        logger.info(
+            f"[{job_id}] Evaluator 결과 (루프 {loop_num}): "
+            f"환각 발견={evaluation.has_hallucination}, "
+            f"지적 항목={len(evaluation.findings)}건"
+        )
+
+        # 환각이 없으면 루프 종료
+        if not evaluation.has_hallucination or not evaluation.findings:
+            loop_log["action"] = "pass"
+            verification_log["loops"].append(loop_log)
+            verification_log["final_action"] = "passed"
+            logger.info(f"[{job_id}] NLI 검증 통과 (루프 {loop_num})")
+            break
+
+        # --- 마지막 루프: 강제 삭제 처리 ---
+        if loop_num == MAX_VERIFICATION_LOOPS:
+            logger.warning(
+                f"[{job_id}] 최대 검증 루프 도달 ({MAX_VERIFICATION_LOOPS}회). "
+                f"잔여 환각 {len(evaluation.findings)}건 강제 삭제 수행"
+            )
+
+            report_dict = current_report.model_dump()
+            cleaned_dict, forced_deletions = force_delete_hallucinations(report_dict, evaluation.findings)
+
+            current_report = CareerAnalysisReport.model_validate(cleaned_dict)
+
+            loop_log["action"] = "force_delete"
+            loop_log["forced_deletions"] = forced_deletions
+            verification_log["loops"].append(loop_log)
+            verification_log["final_action"] = "force_deleted"
+
+            for fd in forced_deletions:
+                logger.info(f"[{job_id}] {fd}")
+
+            break
+
+        # --- Refiner 호출 ---
+        try:
+            refinement = await refine_report(
+                draft_json=current_json_str,
+                evaluation=evaluation,
+                source_context=source_context,
+                company_name=company_name,
+                model_provider=model_provider,
+            )
+        except Exception as e:
+            logger.error(f"[{job_id}] Refiner 호출 실패 (루프 {loop_num}): {e}")
+            loop_log["refiner_error"] = str(e)
+            loop_log["action"] = "refiner_failed"
+            verification_log["loops"].append(loop_log)
+            break
+
+        # Refiner 결과를 CareerAnalysisReport로 재검증
+        try:
+            current_report = CareerAnalysisReport.model_validate(refinement.refined_json)
+        except Exception as e:
+            logger.error(f"[{job_id}] Refiner 결과 스키마 검증 실패 (루프 {loop_num}): {e}")
+            loop_log["refiner_validation_error"] = str(e)
+            loop_log["action"] = "refiner_validation_failed"
+            verification_log["loops"].append(loop_log)
+            break
+
+        loop_log["action"] = "refined"
+        loop_log["changes_made"] = refinement.changes_made
+        verification_log["loops"].append(loop_log)
+
+        logger.info(f"[{job_id}] Refiner 교정 완료 (루프 {loop_num}): {len(refinement.changes_made)}건 수정")
+
+        # 진행률 업데이트
+        progress = 75 + int(5 * loop_num / MAX_VERIFICATION_LOOPS)
+        jobs_dict[job_id]["progress"] = progress
+
+    verification_log["total_loops"] = len(verification_log["loops"])
+
+    return current_report, verification_log

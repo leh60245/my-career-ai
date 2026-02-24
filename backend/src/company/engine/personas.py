@@ -142,47 +142,33 @@ def build_query_queue(company_name: str, year: str | None = None) -> list[dict[s
 
 
 # ============================================================
-# 최종 JSON 생성용 시스템 프롬프트
+# 최종 JSON 생성용 시스템 프롬프트 (Pydantic SSOT 기반 동적 생성)
 # ============================================================
-FINAL_SYNTHESIS_PROMPT = (
-    "당신은 대학교 취업지원센터의 AI 기업분석 시스템입니다. "
-    "아래 제공된 3명의 전문가(산업 애널리스트, 수석 취업 지원관, 실무 면접관)가 수집한 검색 결과를 종합하여, "
-    "취업 준비생을 위한 구조화된 기업 분석 보고서를 작성하십시오.\n\n"
-    "## 출력 규칙 (엄격 준수)\n"
-    "1. 출력은 반드시 순수 JSON 문자열(Raw String)만 반환하십시오.\n"
-    "2. 마크다운 백틱(```)이나 'Here is the JSON' 같은 부연 설명 텍스트를 절대 포함하지 마십시오.\n"
-    "3. 모든 배열(array) 필드는 최소 1개 이상의 항목을 포함해야 합니다.\n"
-    "4. 검색 결과가 부족한 항목은 '정보 부족 - 추가 조사 필요'로 표기하십시오.\n"
-    "5. 매출액, 영업이익 등 재무 데이터는 정확한 단위(원, 만원, 억원)와 기준 연월을 명시하십시오.\n\n"
-    "## JSON 스키마\n"
-    "{\n"
-    '  "company_overview": {\n'
-    '    "introduction": "5문장 이내 기업 요약 (string)",\n'
-    '    "industry": "직관적인 업종 표기 (string)",\n'
-    '    "employee_count": "최근 기준 직원 수 및 기준일 (string)",\n'
-    '    "location": "본사 도로명 주소 (string)",\n'
-    '    "financials": {\n'
-    '      "revenue": "매출액 (단위 및 기준 연월) (string)",\n'
-    '      "operating_profit": "영업이익 (단위 및 기준 연월) (string)"\n'
-    "    }\n"
-    "  },\n"
-    '  "corporate_culture": {\n'
-    '    "core_values": ["핵심가치1", "핵심가치2"],\n'
-    '    "ideal_candidate": ["인재상1", "인재상2"],\n'
-    '    "work_environment": ["조직문화 특징1", "복리후생1"]\n'
-    "  },\n"
-    '  "swot_analysis": {\n'
-    '    "strength": ["강점1", "강점2"],\n'
-    '    "weakness": ["약점1", "약점2"],\n'
-    '    "opportunity": ["기회1", "기회2"],\n'
-    '    "threat": ["위협1", "위협2"],\n'
-    '    "so_strategy": "강점을 활용한 기회 선점 전략 (string)",\n'
-    '    "wt_strategy": "약점과 위협을 극복하는 리스크 관리 전략 (string)"\n'
-    "  },\n"
-    '  "interview_preparation": {\n'
-    '    "recent_issues": ["최근 이슈1", "최근 이슈2"],\n'
-    '    "pressure_questions": ["압박 면접 질문1", "질문2"],\n'
-    '    "expected_answers": ["전략적 답변 가이드1", "가이드2"]\n'
-    "  }\n"
-    "}\n"
-)
+def _build_final_synthesis_prompt() -> str:
+    """
+    CareerAnalysisReport Pydantic 모델에서 JSON 스키마를 동적으로 추출하여
+    최종 합성 시스템 프롬프트를 생성합니다.
+
+    Returns:
+        LLM 시스템 프롬프트 문자열
+    """
+    from backend.src.company.engine.schema_utils import generate_schema_prompt
+    from backend.src.company.schemas.career_report import CareerAnalysisReport
+
+    schema_text = generate_schema_prompt(CareerAnalysisReport)
+
+    return (
+        "당신은 대학교 취업지원센터의 AI 기업분석 시스템입니다. "
+        "아래 제공된 3명의 전문가(산업 애널리스트, 수석 취업 지원관, 실무 면접관)가 수집한 검색 결과를 종합하여, "
+        "취업 준비생을 위한 구조화된 기업 분석 보고서를 작성하십시오.\n\n"
+        "## 출력 규칙 (엄격 준수)\n"
+        "1. 출력은 반드시 순수 JSON 문자열(Raw String)만 반환하십시오.\n"
+        "2. 마크다운 백틱(```)이나 'Here is the JSON' 같은 부연 설명 텍스트를 절대 포함하지 마십시오.\n"
+        "3. 모든 배열(array) 필드는 최소 1개 이상의 항목을 포함해야 합니다.\n"
+        "4. 검색 결과가 부족한 항목은 '정보 부족 - 추가 조사 필요'로 표기하십시오.\n"
+        "5. 매출액, 영업이익 등 재무 데이터는 정확한 단위(원, 만원, 억원)와 기준 연월을 명시하십시오.\n\n"
+        f"## JSON 스키마\n{schema_text}\n"
+    )
+
+
+FINAL_SYNTHESIS_PROMPT = _build_final_synthesis_prompt()
