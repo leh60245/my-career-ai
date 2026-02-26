@@ -16,6 +16,7 @@ from dsp.modules.hf_client import send_hftgi_request_v01_wrapped
 from openai import AzureOpenAI, OpenAI
 from transformers import AutoTokenizer
 
+
 try:
     from anthropic import RateLimitError
 except ImportError:
@@ -27,6 +28,7 @@ except ImportError:
 # try:
 import warnings
 
+
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=UserWarning)
     if "LITELLM_LOCAL_MODEL_COST_MAP" not in os.environ:
@@ -37,6 +39,7 @@ with warnings.catch_warnings():
     litellm.telemetry = False
 
 from litellm.caching.caching import Cache
+
 
 disk_cache_dir = os.path.join(Path.home(), ".storm_local_cache")
 litellm.cache = Cache(disk_cache_dir=disk_cache_dir, type="disk")
@@ -54,15 +57,7 @@ LM_LRU_CACHE_MAX_SIZE = 3000
 
 
 class LM:
-    def __init__(
-        self,
-        model,
-        model_type="chat",
-        temperature=0.0,
-        max_tokens=1000,
-        cache=True,
-        **kwargs,
-    ):
+    def __init__(self, model, model_type="chat", temperature=0.0, max_tokens=1000, cache=True, **kwargs):
         self.model = model
         self.model_type = model_type
         self.cache = cache
@@ -91,7 +86,14 @@ class LM:
 
         # Logging, with removed api key & where `cost` is None on cache hit.
         kwargs = {k: v for k, v in kwargs.items() if not k.startswith("api_")}
-        entry = dict(prompt=prompt, messages=messages, kwargs=kwargs, response=response)
+        # Serialize response to dict to prevent PydanticSerializationUnexpectedValue warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning, message=".*Pydantic.*")
+            try:
+                response_data = dict(response)
+            except Exception:
+                response_data = str(response)
+        entry = dict(prompt=prompt, messages=messages, kwargs=kwargs, response=response_data)
         entry = dict(**entry, outputs=outputs, usage=dict(response["usage"]))
         entry = dict(**entry, cost=response.get("_hidden_params", {}).get("response_cost"))
         self.history.append(entry)
@@ -227,7 +229,9 @@ class LitellmModel(LM):
             completion = cached_litellm_text_completion if cache else litellm_text_completion
 
         response = completion(ujson.dumps(dict(model=self.model, messages=messages, **kwargs)))
-        response_dict = response.json()
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning, message=".*Pydantic.*")
+            response_dict = response.json()
         self.log_usage(response_dict)
         outputs = [c.message.content if hasattr(c, "message") else c["text"] for c in response["choices"]]
 
@@ -283,11 +287,7 @@ class OpenAIModel(dspy.OpenAI):
         return usage
 
     def __call__(
-        self,
-        prompt: str,
-        only_completed: bool = True,
-        return_sorted: bool = False,
-        **kwargs,
+        self, prompt: str, only_completed: bool = True, return_sorted: bool = False, **kwargs
     ) -> list[dict[str, Any]]:
         """Copied from dspy/dsp/modules/gpt3.py with the addition of tracking token usage."""
 
@@ -317,10 +317,7 @@ class OpenAIModel(dspy.OpenAI):
             scored_completions = []
 
             for c in choices:
-                tokens, logprobs = (
-                    c["logprobs"]["tokens"],
-                    c["logprobs"]["token_logprobs"],
-                )
+                tokens, logprobs = (c["logprobs"]["tokens"], c["logprobs"]["token_logprobs"])
 
                 if "<|endoftext|>" in tokens:
                     index = tokens.index("<|endoftext|>") + 1
@@ -367,44 +364,22 @@ class DeepSeekModel(dspy.OpenAI):
 
     def get_usage_and_reset(self):
         """Get the total tokens used and reset the token usage."""
-        usage = {
-            self.model: {
-                "prompt_tokens": self.prompt_tokens,
-                "completion_tokens": self.completion_tokens,
-            }
-        }
+        usage = {self.model: {"prompt_tokens": self.prompt_tokens, "completion_tokens": self.completion_tokens}}
         self.prompt_tokens = 0
         self.completion_tokens = 0
         return usage
 
-    @backoff.on_exception(
-        backoff.expo,
-        ERRORS,
-        max_time=1000,
-        on_backoff=backoff_hdlr,
-        giveup=giveup_hdlr,
-    )
+    @backoff.on_exception(backoff.expo, ERRORS, max_time=1000, on_backoff=backoff_hdlr, giveup=giveup_hdlr)
     def _create_completion(self, prompt: str, **kwargs):
         """Create a completion using the DeepSeek API."""
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-        }
-        data = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            **kwargs,
-        }
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}
+        data = {"model": self.model, "messages": [{"role": "user", "content": prompt}], **kwargs}
         response = requests.post(f"{self.api_base}/v1/chat/completions", headers=headers, json=data)
         response.raise_for_status()
         return response.json()
 
     def __call__(
-        self,
-        prompt: str,
-        only_completed: bool = True,
-        return_sorted: bool = False,
-        **kwargs,
+        self, prompt: str, only_completed: bool = True, return_sorted: bool = False, **kwargs
     ) -> list[dict[str, Any]]:
         """Call the DeepSeek API to generate completions."""
         assert only_completed, "for now"
@@ -418,11 +393,7 @@ class DeepSeekModel(dspy.OpenAI):
         choices = response["choices"]
         completions = [choice["message"]["content"] for choice in choices]
 
-        history = {
-            "prompt": prompt,
-            "response": response,
-            "kwargs": kwargs,
-        }
+        history = {"prompt": prompt, "response": response, "kwargs": kwargs}
         self.history.append(history)
 
         return completions
@@ -451,11 +422,7 @@ class AzureOpenAIModel(dspy.LM):
         self.provider = "azure"
         self.model_type = model_type
 
-        self.client = AzureOpenAI(
-            azure_endpoint=azure_endpoint,
-            api_key=api_key,
-            api_version=api_version,
-        )
+        self.client = AzureOpenAI(azure_endpoint=azure_endpoint, api_key=api_key, api_version=api_version)
         self.prompt_tokens = 0
         self.completion_tokens = 0
 
@@ -470,13 +437,7 @@ class AzureOpenAIModel(dspy.LM):
             **kwargs,
         }
 
-    @backoff.on_exception(
-        backoff.expo,
-        ERRORS,
-        max_time=1000,
-        on_backoff=backoff_hdlr,
-        giveup=giveup_hdlr,
-    )
+    @backoff.on_exception(backoff.expo, ERRORS, max_time=1000, on_backoff=backoff_hdlr, giveup=giveup_hdlr)
     def basic_request(self, prompt: str, **kwargs) -> Any:
         kwargs = {**self.kwargs, **kwargs}
 
@@ -490,11 +451,7 @@ class AzureOpenAIModel(dspy.LM):
 
             self.log_usage(response)
 
-            history_entry = {
-                "prompt": prompt,
-                "response": dict(response),
-                "kwargs": kwargs,
-            }
+            history_entry = {"prompt": prompt, "response": dict(response), "kwargs": kwargs}
             self.history.append(history_entry)
 
             return response
@@ -519,23 +476,12 @@ class AzureOpenAIModel(dspy.LM):
 
     def get_usage_and_reset(self):
         """Get the total tokens used and reset the token usage."""
-        usage = {
-            self.model: {
-                "prompt_tokens": self.prompt_tokens,
-                "completion_tokens": self.completion_tokens,
-            }
-        }
+        usage = {self.model: {"prompt_tokens": self.prompt_tokens, "completion_tokens": self.completion_tokens}}
         self.prompt_tokens = 0
         self.completion_tokens = 0
         return usage
 
-    def __call__(
-        self,
-        prompt: str,
-        only_completed: bool = True,
-        return_sorted: bool = False,
-        **kwargs,
-    ) -> list[str]:
+    def __call__(self, prompt: str, only_completed: bool = True, return_sorted: bool = False, **kwargs) -> list[str]:
         """Get completions from Azure OpenAI.
 
         Args:
@@ -592,29 +538,15 @@ class GroqModel(dspy.OpenAI):
 
     def get_usage_and_reset(self):
         """Get the total tokens used and reset the token usage."""
-        usage = {
-            self.model: {
-                "prompt_tokens": self.prompt_tokens,
-                "completion_tokens": self.completion_tokens,
-            }
-        }
+        usage = {self.model: {"prompt_tokens": self.prompt_tokens, "completion_tokens": self.completion_tokens}}
         self.prompt_tokens = 0
         self.completion_tokens = 0
         return usage
 
-    @backoff.on_exception(
-        backoff.expo,
-        ERRORS,
-        max_time=1000,
-        on_backoff=backoff_hdlr,
-        giveup=giveup_hdlr,
-    )
+    @backoff.on_exception(backoff.expo, ERRORS, max_time=1000, on_backoff=backoff_hdlr, giveup=giveup_hdlr)
     def _create_completion(self, prompt: str, **kwargs):
         """Create a completion using the Groq API."""
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-        }
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}
 
         # Remove unsupported fields
         kwargs.pop("logprobs", None)
@@ -629,11 +561,7 @@ class GroqModel(dspy.OpenAI):
         if kwargs.get("temperature", 1) == 0:
             kwargs["temperature"] = 1e-8
 
-        data = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            **kwargs,
-        }
+        data = {"model": self.model, "messages": [{"role": "user", "content": prompt}], **kwargs}
 
         # Remove 'name' field from messages if present
         for message in data["messages"]:
@@ -644,11 +572,7 @@ class GroqModel(dspy.OpenAI):
         return response.json()
 
     def __call__(
-        self,
-        prompt: str,
-        only_completed: bool = True,
-        return_sorted: bool = False,
-        **kwargs,
+        self, prompt: str, only_completed: bool = True, return_sorted: bool = False, **kwargs
     ) -> list[dict[str, Any]]:
         """Call the Groq API to generate completions."""
         assert only_completed, "for now"
@@ -662,11 +586,7 @@ class GroqModel(dspy.OpenAI):
         choices = response["choices"]
         completions = [choice["message"]["content"] for choice in choices]
 
-        history = {
-            "prompt": prompt,
-            "response": response,
-            "kwargs": kwargs,
-        }
+        history = {"prompt": prompt, "response": response, "kwargs": kwargs}
         self.history.append(history)
 
         return completions
@@ -675,13 +595,7 @@ class GroqModel(dspy.OpenAI):
 class ClaudeModel(dspy.dsp.modules.lm.LM):
     """Copied from dspy/dsp/modules/anthropic.py with the addition of tracking token usage."""
 
-    def __init__(
-        self,
-        model: str,
-        api_key: str | None = None,
-        api_base: str | None = None,
-        **kwargs,
-    ):
+    def __init__(self, model: str, api_key: str | None = None, api_base: str | None = None, **kwargs):
         super().__init__(model)
         try:
             from anthropic import Anthropic
@@ -718,12 +632,7 @@ class ClaudeModel(dspy.dsp.modules.lm.LM):
 
     def get_usage_and_reset(self):
         """Get the total tokens used and reset the token usage."""
-        usage = {
-            self.model: {
-                "prompt_tokens": self.prompt_tokens,
-                "completion_tokens": self.completion_tokens,
-            }
-        }
+        usage = {self.model: {"prompt_tokens": self.prompt_tokens, "completion_tokens": self.completion_tokens}}
         self.prompt_tokens = 0
         self.completion_tokens = 0
 
@@ -751,10 +660,7 @@ class ClaudeModel(dspy.dsp.modules.lm.LM):
                 "stop_reason": response.stop_reason,
                 "stop_sequence": response.stop_sequence,
                 "type": response.type,
-                "usage": {
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens,
-                },
+                "usage": {"input_tokens": response.usage.input_tokens, "output_tokens": response.usage.output_tokens},
             },
             "kwargs": kwargs,
             "raw_kwargs": raw_kwargs,
@@ -763,12 +669,7 @@ class ClaudeModel(dspy.dsp.modules.lm.LM):
         return response
 
     @backoff.on_exception(
-        backoff.expo,
-        (RateLimitError,),
-        max_time=1000,
-        max_tries=8,
-        on_backoff=backoff_hdlr,
-        giveup=giveup_hdlr,
+        backoff.expo, (RateLimitError,), max_time=1000, max_tries=8, on_backoff=backoff_hdlr, giveup=giveup_hdlr
     )
     def request(self, prompt: str, **kwargs):
         """Handles retrieval of completions from Anthropic whilst handling API errors."""
@@ -833,18 +734,10 @@ class VLLMClient(dspy.dsp.LM):
         self._token_usage_lock = threading.Lock()
 
     def basic_request(self, prompt, **kwargs):
-        completion = self.client.chat.completions.create(
-            **kwargs,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        completion = self.client.chat.completions.create(**kwargs, messages=[{"role": "user", "content": prompt}])
         return completion
 
-    @backoff.on_exception(
-        backoff.expo,
-        ERRORS,
-        max_time=1000,
-        on_backoff=backoff_hdlr,
-    )
+    @backoff.on_exception(backoff.expo, ERRORS, max_time=1000, on_backoff=backoff_hdlr)
     def request(self, prompt: str, **kwargs):
         return self.basic_request(prompt, **kwargs)
 
@@ -883,11 +776,7 @@ class VLLMClient(dspy.dsp.LM):
         choices = response.choices
         completions = [choice.message.content for choice in choices]
 
-        history = {
-            "prompt": prompt,
-            "response": response,
-            "kwargs": kwargs,
-        }
+        history = {"prompt": prompt, "response": response, "kwargs": kwargs}
         self.history.append(history)
 
         return completions
@@ -908,13 +797,7 @@ class OllamaClient(dspy.OllamaLocal):
 
 class TGIClient(dspy.HFClientTGI):
     def __init__(self, model, port, url, http_request_kwargs=None, **kwargs):
-        super().__init__(
-            model=model,
-            port=port,
-            url=url,
-            http_request_kwargs=http_request_kwargs,
-            **kwargs,
-        )
+        super().__init__(model=model, port=port, url=url, http_request_kwargs=http_request_kwargs, **kwargs)
 
     def _generate(self, prompt, **kwargs):
         """Copied from dspy/dsp/modules/hf_client.py with the addition of removing hard-coded parameters."""
@@ -922,12 +805,7 @@ class TGIClient(dspy.HFClientTGI):
 
         payload = {
             "inputs": prompt,
-            "parameters": {
-                "do_sample": kwargs["n"] > 1,
-                "best_of": kwargs["n"],
-                "details": kwargs["n"] > 1,
-                **kwargs,
-            },
+            "parameters": {"do_sample": kwargs["n"] > 1, "best_of": kwargs["n"], "details": kwargs["n"] > 1, **kwargs},
         }
 
         payload["parameters"] = openai_to_hf(**payload["parameters"])
@@ -1025,23 +903,13 @@ class TogetherClient(dspy.HFModel):
 
     def get_usage_and_reset(self):
         """Get the total tokens used and reset the token usage."""
-        usage = {
-            self.model: {
-                "prompt_tokens": self.prompt_tokens,
-                "completion_tokens": self.completion_tokens,
-            }
-        }
+        usage = {self.model: {"prompt_tokens": self.prompt_tokens, "completion_tokens": self.completion_tokens}}
         self.prompt_tokens = 0
         self.completion_tokens = 0
 
         return usage
 
-    @backoff.on_exception(
-        backoff.expo,
-        ERRORS,
-        max_time=1000,
-        on_backoff=backoff_hdlr,
-    )
+    @backoff.on_exception(backoff.expo, ERRORS, max_time=1000, on_backoff=backoff_hdlr)
     def _generate(self, prompt, **kwargs):
         kwargs = {**self.kwargs, **kwargs}
 
@@ -1104,12 +972,7 @@ class TogetherClient(dspy.HFModel):
 class GoogleModel(dspy.dsp.modules.lm.LM):
     """A wrapper class for Google Gemini API."""
 
-    def __init__(
-        self,
-        model: str,
-        api_key: str | None = None,
-        **kwargs,
-    ):
+    def __init__(self, model: str, api_key: str | None = None, **kwargs):
         """You can use `genai.list_models()` to get a list of available models."""
         super().__init__(model)
         try:
@@ -1135,10 +998,7 @@ class GoogleModel(dspy.dsp.modules.lm.LM):
         self.config = genai.GenerationConfig(**kwargs)
         self.llm = genai.GenerativeModel(model_name=model, generation_config=self.config)
 
-        self.kwargs = {
-            "n": 1,
-            **kwargs,
-        }
+        self.kwargs = {"n": 1, **kwargs}
 
         self.history: list[dict[str, Any]] = []
 
@@ -1156,12 +1016,7 @@ class GoogleModel(dspy.dsp.modules.lm.LM):
 
     def get_usage_and_reset(self):
         """Get the total tokens used and reset the token usage."""
-        usage = {
-            self.model: {
-                "prompt_tokens": self.prompt_tokens,
-                "completion_tokens": self.completion_tokens,
-            }
-        }
+        usage = {self.model: {"prompt_tokens": self.prompt_tokens, "completion_tokens": self.completion_tokens}}
         self.prompt_tokens = 0
         self.completion_tokens = 0
 
@@ -1169,45 +1024,26 @@ class GoogleModel(dspy.dsp.modules.lm.LM):
 
     def basic_request(self, prompt: str, **kwargs):
         raw_kwargs = kwargs
-        kwargs = {
-            **self.kwargs,
-            **kwargs,
-        }
+        kwargs = {**self.kwargs, **kwargs}
 
         # Google disallows "n" arguments.
         n = kwargs.pop("n", None)
 
         response = self.llm.generate_content(prompt, generation_config=kwargs)
 
-        history = {
-            "prompt": prompt,
-            "response": [response.to_dict()],
-            "kwargs": kwargs,
-            "raw_kwargs": raw_kwargs,
-        }
+        history = {"prompt": prompt, "response": [response.to_dict()], "kwargs": kwargs, "raw_kwargs": raw_kwargs}
         self.history.append(history)
 
         return response
 
     @backoff.on_exception(
-        backoff.expo,
-        (Exception,),
-        max_time=1000,
-        max_tries=8,
-        on_backoff=backoff_hdlr,
-        giveup=giveup_hdlr,
+        backoff.expo, (Exception,), max_time=1000, max_tries=8, on_backoff=backoff_hdlr, giveup=giveup_hdlr
     )
     def request(self, prompt: str, **kwargs):
         """Handles retrieval of completions from Google whilst handling API errors"""
         return self.basic_request(prompt, **kwargs)
 
-    def __call__(
-        self,
-        prompt: str,
-        only_completed: bool = True,
-        return_sorted: bool = False,
-        **kwargs,
-    ):
+    def __call__(self, prompt: str, only_completed: bool = True, return_sorted: bool = False, **kwargs):
         assert only_completed, "for now"
         assert return_sorted is False, "for now"
 

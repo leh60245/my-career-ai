@@ -1,16 +1,16 @@
 #!/usr/bin/env python
 """
-Enterprise STORM CLI - 기업 분석 리포트 생성기 (v4.0 - Pipeline Integrated)
+Enterprise Career AI CLI - 기업 분석 리포트 생성기 (v5.0 - 3-Phase Sequential RAG)
 
 Role:
     - 사용자 입력을 받는 CLI 진입점 (Entry Point)
     - ReportJob 생성 (PENDING)
-    - src.engine.storm_pipeline 실행 (Orchestrator 호출)
+    - src.engine.career_pipeline 실행 (3-Phase Sequential RAG + Phase-by-Phase NLI)
 
 Changes:
-    - 모든 비즈니스 로직 제거 -> src/engine/storm_pipeline.py로 위임
-    - DB 연결 및 Job 생성 로직 -> src/services/report_job_service.py 사용
-    - Thin Client 구조로 변경
+    - storm_pipeline (STORMWikiRunner 레거시) -> career_pipeline v2.0 으로 전환
+    - 저장 경로: results/{company_name}/{job_id}/
+    - Thin Client 구조 유지
 
 Usage:
     python scripts/run_storm.py
@@ -26,10 +26,12 @@ from argparse import ArgumentParser
 from backend.src.common.config import AI_CONFIG, TOPICS
 from backend.src.common.database.connection import AsyncDatabaseEngine, ensure_schema
 from backend.src.common.enums import ReportJobStatus
-from backend.src.company.engine.storm_pipeline import run_storm_pipeline
+from backend.src.company.engine.career_pipeline import run_career_pipeline
 from backend.src.company.repositories.company_repository import CompanyRepository
 from backend.src.company.repositories.report_job_repository import ReportJobRepository
 from backend.src.company.services.report_job_service import ReportJobService
+from backend.src.user import models as user_models  # noqa: F401  -- ReportJob FK 관계 해소
+from backend.src.user.models import User  # noqa: F401  -- SQLAlchemy 레지스트리에 User 등록
 
 
 # 프로젝트 루트 경로 설정
@@ -153,8 +155,8 @@ async def main():
     jobs_dict = {job_id: {"status": ReportJobStatus.PENDING.value, "progress": 0, "message": "Initializing..."}}
 
     try:
-        # [핵심] 모든 로직은 엔진으로 위임
-        await run_storm_pipeline(
+        # [핵심] 모든 로직은 career_pipeline v2.0 (3-Phase Sequential RAG)으로 위임
+        await run_career_pipeline(
             job_id=job_id, company_name=company_name, topic=topic, jobs_dict=jobs_dict, model_provider=provider
         )
 

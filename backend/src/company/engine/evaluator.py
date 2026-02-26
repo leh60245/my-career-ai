@@ -16,7 +16,7 @@ import json
 import logging
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.src.common.config import AI_CONFIG
 
@@ -46,6 +46,67 @@ class EvaluationResult(BaseModel):
     has_hallucination: bool = Field(description="환각 존재 여부")
     findings: list[HallucinationFinding] = Field(default_factory=list, description="환각이 의심되는 항목 리스트")
     summary: str = Field(default="", description="전체 평가 요약")
+
+    @field_validator("has_hallucination", mode="before")
+    @classmethod
+    def coerce_has_hallucination(cls, v):
+        """Gemini가 bool 대신 문자열('true'/'false')을 반환하는 경우 정규화."""
+        if isinstance(v, str):
+            return v.strip().lower() in ("true", "1", "yes")
+        return v
+
+    @field_validator("findings", mode="before")
+    @classmethod
+    def coerce_findings_to_list(cls, v):
+        """LLM이 findings 필드를 비정규 형식으로 반환하는 경우 정규화.
+
+        Gemini 등 일부 프로바이더가 findings를 문자열 배열이나
+        필수 키가 누락된 dict 배열로 반환하는 케이스를 방어합니다.
+        """
+        if isinstance(v, str):
+            logger.warning(f"findings 필드가 문자열('{v[:100]}')로 수신됨. 빈 리스트로 정규화합니다.")
+            return []
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            return []
+
+        normalized: list[dict] = []
+        for idx, item in enumerate(v):
+            if isinstance(item, BaseModel):
+                # 이미 HallucinationFinding 인스턴스인 경우 dict로 변환하여 통과
+                normalized.append(item.model_dump())
+            elif isinstance(item, str):
+                # Gemini가 findings를 문자열 배열로 반환하는 경우
+                logger.warning(f"findings[{idx}]가 문자열로 수신됨. HallucinationFinding dict로 변환합니다.")
+                normalized.append(
+                    {
+                        "section": "unknown",
+                        "statement": item,
+                        "reason": "LLM이 구조화되지 않은 문자열로 반환",
+                        "instruction": "rewrite",
+                    }
+                )
+            elif isinstance(item, dict):
+                # 필수 키 누락 시 기본값으로 보충
+                coerced = dict(item)
+                if "statement" not in coerced:
+                    # section/instruction 등 다른 키에서 문맥 추출 시도
+                    fallback_text = coerced.get("section", "") or coerced.get("description", "") or str(coerced)
+                    coerced["statement"] = fallback_text
+                    logger.warning(f"findings[{idx}]에 'statement' 키 누락. fallback 값으로 보충합니다.")
+                if "reason" not in coerced:
+                    coerced["reason"] = coerced.get("description", "LLM 응답에서 reason 키 누락")
+                    logger.warning(f"findings[{idx}]에 'reason' 키 누락. 기본값으로 보충합니다.")
+                if "section" not in coerced:
+                    coerced["section"] = "unknown"
+                if "instruction" not in coerced:
+                    coerced["instruction"] = "rewrite"
+                normalized.append(coerced)
+            else:
+                logger.warning(f"findings[{idx}]가 예상치 못한 타입({type(item).__name__})입니다. 건너뜁니다.")
+                continue
+        return normalized
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -217,11 +278,9 @@ def _parse_evaluation_result(raw_text: str) -> EvaluationResult:
         data = json.loads(json_str)
         return EvaluationResult.model_validate(data)
     except Exception as e:
-        logger.error(f"Evaluator 응답 파싱 실패: {e}")
-        # 파싱 실패 시 환각 없음으로 처리 (안전 측 판단)
-        return EvaluationResult(
-            has_hallucination=False, findings=[], summary=f"Evaluator 응답 파싱 실패로 검증 건너뜀: {e}"
-        )
+        logger.error(f"Evaluator 응답 파싱 실패: {e}, 원본 응답(앞 500자): {raw_text[:500]}")
+        # Fail-safe: 파싱 실패 시 예외를 상위로 전파하여 검증 무력화를 방지
+        raise ValueError(f"Evaluator 응답 스키마 검증 실패: {e}") from e
 
 
 def extract_sections_for_evaluation(report_dict: dict[str, Any]) -> dict[str, list[str]]:

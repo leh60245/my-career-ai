@@ -140,6 +140,53 @@ class TestEvaluatorSchema:
         assert len(restored.findings) == 1
         assert restored.findings[0].instruction == "delete"
 
+    def test_findings_coerce_string_items_to_hallucination_finding(self):
+        """Gemini가 findings를 문자열 배열로 반환하면 HallucinationFinding으로 변환해야 한다."""
+        data = {
+            "has_hallucination": True,
+            "findings": [
+                "삼성전자 노조는 2026년 임금교섭 결렬을 선언했습니다.",
+                "소비자 권익 단체가 비스포크 AI 냉장고를 최악으로 선정했습니다.",
+            ],
+            "summary": "2건 발견",
+        }
+        result = EvaluationResult.model_validate(data)
+        assert result.has_hallucination
+        assert len(result.findings) == 2
+        assert result.findings[0].statement == "삼성전자 노조는 2026년 임금교섭 결렬을 선언했습니다."
+        assert result.findings[0].section == "unknown"
+        assert result.findings[0].instruction == "rewrite"
+        assert result.findings[1].reason == "LLM이 구조화되지 않은 문자열로 반환"
+
+    def test_findings_coerce_dict_with_missing_keys(self):
+        """Gemini가 findings에서 statement/reason 키를 누락한 경우 기본값으로 보충해야 한다."""
+        data = {
+            "has_hallucination": True,
+            "findings": [
+                {"section": "swot_analysis.threat", "instruction": "rewrite"},
+                {"section": "interview_preparation.recent_issues", "description": "원천 데이터 미확인"},
+            ],
+            "summary": "2건",
+        }
+        result = EvaluationResult.model_validate(data)
+        assert len(result.findings) == 2
+        # 첫 번째: statement/reason 누락 -> fallback
+        assert result.findings[0].statement == "swot_analysis.threat"
+        assert result.findings[0].instruction == "rewrite"
+        # 두 번째: statement/reason 누락이지만 description에서 추출
+        assert result.findings[1].reason == "원천 데이터 미확인"
+        assert result.findings[1].instruction == "rewrite"  # 누락 시 기본값
+
+    def test_has_hallucination_string_coercion(self):
+        """Gemini가 has_hallucination을 문자열 'true'/'false'로 반환해도 정상 파싱해야 한다."""
+        data_true = {"has_hallucination": "true", "findings": [], "summary": "환각 있음"}
+        result_true = EvaluationResult.model_validate(data_true)
+        assert result_true.has_hallucination is True
+
+        data_false = {"has_hallucination": "false", "findings": [], "summary": "환각 없음"}
+        result_false = EvaluationResult.model_validate(data_false)
+        assert result_false.has_hallucination is False
+
 
 # ============================================================
 # 2. Evaluator 프롬프트 및 파싱 테스트
@@ -193,16 +240,63 @@ class TestEvaluatorLogic:
         assert len(result.findings) == 0
 
     def test_parse_evaluation_result_invalid_json(self):
-        """잘못된 JSON이면 환각 없음으로 안전 처리해야 한다."""
-        result = _parse_evaluation_result("이것은 JSON이 아닙니다")
+        """잘못된 JSON이면 ValueError가 발생해야 한다 (Fail-safe: 파싱 실패 시 검증 무력화 방지)."""
+        with pytest.raises(ValueError, match="Evaluator 응답 스키마 검증 실패"):
+            _parse_evaluation_result("이것은 JSON이 아닙니다")
+
+    def test_parse_evaluation_result_findings_as_string(self):
+        """LLM이 findings를 문자열로 반환해도 field_validator가 빈 리스트로 정규화해야 한다."""
+        raw = json.dumps({"has_hallucination": False, "findings": "환각 없음", "summary": "통과"}, ensure_ascii=False)
+        result = _parse_evaluation_result(raw)
         assert not result.has_hallucination
-        assert "파싱 실패" in result.summary
+        assert isinstance(result.findings, list)
+        assert len(result.findings) == 0
+
+    def test_parse_evaluation_result_findings_as_none(self):
+        """findings가 None이어도 field_validator가 빈 리스트로 정규화해야 한다."""
+        raw = json.dumps({"has_hallucination": False, "findings": None, "summary": "통과"})
+        result = _parse_evaluation_result(raw)
+        assert not result.has_hallucination
+        assert isinstance(result.findings, list)
+        assert len(result.findings) == 0
 
     def test_parse_evaluation_result_from_markdown(self):
         """마크다운으로 감싼 JSON도 파싱해야 한다."""
         raw = '```json\n{"has_hallucination": false, "findings": [], "summary": "OK"}\n```'
         result = _parse_evaluation_result(raw)
         assert not result.has_hallucination
+
+    def test_parse_evaluation_result_gemini_string_findings(self):
+        """Gemini가 findings를 문자열 배열로 반환해도 파싱에 성공해야 한다."""
+        raw = json.dumps(
+            {
+                "has_hallucination": "true",
+                "findings": [
+                    "삼성전자 노조는 2026년 임금교섭 결렬을 선언했습니다.",
+                    "미국의 대중국 반도체 수출 통제 유예 조치가 종료 예정입니다.",
+                ],
+                "summary": "2건의 환각 발견",
+            },
+            ensure_ascii=False,
+        )
+        result = _parse_evaluation_result(raw)
+        assert result.has_hallucination is True
+        assert len(result.findings) == 2
+        assert "임금교섭" in result.findings[0].statement
+
+    def test_parse_evaluation_result_gemini_partial_dict_findings(self):
+        """Gemini가 findings에서 필수 키를 누락한 dict를 반환해도 파싱에 성공해야 한다."""
+        raw = json.dumps(
+            {
+                "has_hallucination": True,
+                "findings": [{"section": "swot_analysis.strength", "instruction": "delete"}],
+                "summary": "1건 발견",
+            },
+            ensure_ascii=False,
+        )
+        result = _parse_evaluation_result(raw)
+        assert len(result.findings) == 1
+        assert result.findings[0].instruction == "delete"
 
     def test_extract_sections_for_evaluation(self):
         """리포트에서 검증 대상 섹션을 올바르게 추출해야 한다."""
@@ -472,6 +566,53 @@ class TestVerificationLoopE2E:
         assert log["loops"][0]["action"] == "pass"
 
     @pytest.mark.asyncio
+    async def test_verification_loop_hallucination_true_findings_empty(self, sample_report, jobs_dict):
+        """has_hallucination=True이면서 findings=[]인 엣지 케이스에서 잘못 통과하지 않아야 한다.
+
+        이 시나리오는 LLM이 findings를 문자열로 반환하여 coerce_findings_to_list 검증기가
+        빈 리스트로 정규화한 경우 발생합니다. 기존 or 조건에서는 잘못 통과(pass)되었으나,
+        and 조건으로 수정 후에는 루프가 계속 실행되어 최종적으로 force_delete가 수행됩니다.
+        """
+        from backend.src.company.engine.career_pipeline import _run_verification_loop
+
+        # Evaluator가 has_hallucination=True이지만 findings가 빈 리스트인 경우
+        # (coerce_findings_to_list가 문자열 -> [] 정규화)
+        eval_result = EvaluationResult(
+            has_hallucination=True, findings=[], summary="환각이 의심되나 구체적 항목을 특정할 수 없음"
+        )
+
+        # Refiner는 변경 없이 통과 (findings가 비어서 교정할 대상이 없음)
+        refine_result = RefinementResult(refined_json=SAMPLE_REPORT_DICT, changes_made=[], forced_deletions=[])
+
+        with (
+            patch(
+                "backend.src.company.engine.career_pipeline.evaluate_report",
+                new_callable=AsyncMock,
+                return_value=eval_result,
+            ),
+            patch(
+                "backend.src.company.engine.career_pipeline.refine_report",
+                new_callable=AsyncMock,
+                return_value=refine_result,
+            ),
+        ):
+            result, log = await _run_verification_loop(
+                report_json=sample_report,
+                source_context=SAMPLE_SOURCE_CONTEXT,
+                company_name="테스트기업",
+                model_provider="openai",
+                job_id="test-job",
+                jobs_dict=jobs_dict,
+            )
+
+        # and 조건으로 수정 후: has_hallucination=True이므로 루프가 통과하지 않고 계속 실행
+        assert isinstance(result, CareerAnalysisReport)
+        assert log["total_loops"] == 2
+        assert log["final_action"] == "force_deleted"
+        # force_delete가 수행되지만 findings가 비어서 실제 삭제는 없음 (no-op)
+        assert log["loops"][-1]["action"] == "force_delete"
+
+    @pytest.mark.asyncio
     async def test_verification_loop_hallucination_refined(self, sample_report, jobs_dict):
         """환각이 발견되면 Refiner를 호출하고 재검증해야 한다."""
         from backend.src.company.engine.career_pipeline import _run_verification_loop
@@ -608,6 +749,8 @@ class TestVerificationLoopE2E:
         assert isinstance(result, CareerAnalysisReport)
         assert log["total_loops"] == 1
         assert "evaluator_error" in log["loops"][0]
+        assert log["loops"][0]["action"] == "error"
+        assert log["final_action"] == "error"
 
     @pytest.mark.asyncio
     async def test_verification_loop_refiner_failure(self, sample_report, jobs_dict):

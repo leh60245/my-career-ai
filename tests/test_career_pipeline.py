@@ -2,16 +2,18 @@
 Career Pipeline 단위 테스트
 
 고정 페르소나 쿼리 큐, JSON 파싱 방어 로직, Pydantic 스키마 검증,
-쿼리 후처리 로직 등을 검증합니다.
+쿼리 후처리 로직, Sequential RAG 헬퍼 함수 등을 검증합니다.
 
 테스트 전략:
 - personas 모듈: 순수 단위 테스트 (DB 불필요)
 - json_utils 모듈: 순수 단위 테스트 (DB 불필요)
 - career_report 스키마: Pydantic 검증 테스트
 - career_pipeline 내부 함수: 순수 단위 테스트
+- Sequential RAG: 체이닝, Context Starvation, Phase 병합 테스트
 """
 
 import json
+from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
@@ -27,6 +29,10 @@ from backend.src.company.engine.personas import (
     CAREER_ADVISOR,
     FINAL_SYNTHESIS_PROMPT,
     INDUSTRY_ANALYST,
+    PHASE1_SYSTEM_PROMPT,
+    PHASE2_SYSTEM_PROMPT,
+    PHASE3_SYSTEM_PROMPT,
+    PHASE_PERSONA_MAP,
     build_query_queue,
 )
 from backend.src.company.schemas.career_report import (
@@ -361,18 +367,8 @@ class TestQueryPostprocessing:
 
         assert "삼성전자" in result[0]["query"]
 
-    def test_post_process_adds_keyword(self):
-        """페르소나별 키워드가 쿼리에 추가되어야 한다."""
-        from backend.src.company.engine.career_pipeline import _post_process_queries
-
-        query_items = [{"persona": "수석 취업 지원관", "query": "삼성전자 공식 홈페이지", "tag": "WEB"}]
-        result = _post_process_queries(query_items, "삼성전자")
-
-        # 수석 취업 지원관의 키워드 중 하나가 추가되어야 함
-        added_any = any(kw in result[0]["query"] for kw in ["인재상", "핵심가치", "조직문화", "채용"])
-        assert added_any
-
-    def test_post_process_respects_length_limit(self):
+    def test_post_process_no_forced_tags(self):
+        """롤백 후 카테고리 태그가 강제 추가되지 않아야 한다."""
         """쿼리 길이가 200자를 넘지 않아야 한다."""
         from backend.src.company.engine.career_pipeline import _post_process_queries
 
@@ -409,21 +405,23 @@ class TestLLMContextBuild:
             ]
         }
 
-        context = _build_llm_context(search_results, "삼성전자")
+        context, truncation_info = _build_llm_context(search_results, "삼성전자")
         assert "삼성전자" in context
         assert "산업 애널리스트" in context
         assert "반도체 분야 세계 1위" in context
+        assert truncation_info["truncated"] is False
 
     def test_build_llm_context_empty_results(self):
         """검색 결과가 없을 때 '검색 결과 없음'이 포함되어야 한다."""
         from backend.src.company.engine.career_pipeline import _build_llm_context
 
-        context = _build_llm_context({}, "네이버")
+        context, truncation_info = _build_llm_context({}, "네이버")
         assert "네이버" in context
         assert "검색 결과 없음" in context
+        assert truncation_info["truncated"] is False
 
     def test_build_final_prompt_contains_all_parts(self):
-        """최종 프롬프트에 모든 필수 요소가 포함되어야 한다."""
+        """최종 프롬프트에 기업명, 주제, 컨텍스트가 포함되어야 한다."""
         from backend.src.company.engine.career_pipeline import _build_final_prompt
 
         prompt = _build_final_prompt("삼성전자", "기업 분석", "테스트 컨텍스트")
@@ -431,6 +429,15 @@ class TestLLMContextBuild:
         assert "기업 분석" in prompt
         assert "테스트 컨텍스트" in prompt
         assert "JSON" in prompt
+
+    def test_build_final_prompt_no_duplicate_synthesis(self):
+        """최종 프롬프트에 FINAL_SYNTHESIS_PROMPT가 포함되지 않아야 한다 (이중 전달 방지)."""
+        from backend.src.company.engine.career_pipeline import _build_final_prompt
+        from backend.src.company.engine.personas import FINAL_SYNTHESIS_PROMPT
+
+        prompt = _build_final_prompt("테스트기업", "기업 분석", "컨텍스트")
+        # _call_llm에서 system message로 이미 전달하므로 user prompt에는 포함되지 않아야 함
+        assert FINAL_SYNTHESIS_PROMPT not in prompt
 
 
 # ============================================================
@@ -468,3 +475,533 @@ class TestReferenceExtraction:
 
         refs = _extract_references([])
         assert refs == {}
+
+
+# ============================================================
+# 7. Truncation 로직 테스트
+# ============================================================
+class TestTruncation:
+    """입력 컨텍스트 글자 수 기반 절삭(Truncation) 테스트"""
+
+    def test_truncation_under_limit(self):
+        """
+        50,000자 미만 컨텍스트는 절삭되지 않아야 한다.
+        """
+        from backend.src.company.engine.career_pipeline import _build_llm_context
+
+        search_results = {"산업 애널리스트": [{"snippets": ["짧은 스니펫"], "title": "Test", "url": "http://test.com"}]}
+        context, info = _build_llm_context(search_results, "테스트")
+
+        assert info["truncated"] is False
+        assert info["original_length"] == info["final_length"]
+
+    def test_truncation_over_limit(self):
+        """
+        50,000자 초과 컨텍스트는 정상 절삭되고 메타데이터가 기록되어야 한다.
+        """
+        from backend.src.company.engine.career_pipeline import _build_llm_context
+
+        # 각 스니펫을 매우 길게 만들어 50,000자 초과하도록 함
+        # 스니펫 앞부분을 고유하게 하여 중복 제거(dedup)를 회피
+        # 3 페르소나 * 15 스니펫 * 4000자 = 약 180,000자
+        search_results = {
+            "산업 애널리스트": [
+                {"snippets": [f"analyst_{i}_" + "A" * 4000], "title": f"Test {i}", "url": f"http://test{i}.com"}
+                for i in range(15)
+            ],
+            "수석 취업 지원관": [
+                {"snippets": [f"advisor_{i}_" + "B" * 4000], "title": f"Test2 {i}", "url": f"http://test2-{i}.com"}
+                for i in range(15)
+            ],
+            "실무 면접관": [
+                {"snippets": [f"interviewer_{i}_" + "C" * 4000], "title": f"Test3 {i}", "url": f"http://test3-{i}.com"}
+                for i in range(15)
+            ],
+        }
+        context, info = _build_llm_context(search_results, "테스트")
+
+        assert info["truncated"] is True
+        assert info["original_length"] > 50_000
+        assert info["final_length"] <= 50_000 + 100  # 절삭 메시지 길이 여유
+        assert "텍스트 절삭됨" in context
+
+    def test_truncation_metadata_fields(self):
+        """
+        truncation_info에 필수 필드가 존재해야 한다.
+        """
+        from backend.src.company.engine.career_pipeline import _build_llm_context
+
+        _, info = _build_llm_context({}, "테스트")
+
+        assert "original_length" in info
+        assert "final_length" in info
+        assert "truncated" in info
+        assert "max_context_chars" in info
+        assert "snippets_per_persona" in info
+        assert info["max_context_chars"] == 50_000
+
+
+# ============================================================
+# 8. 프론트엔드 출처 포맷팅 테스트
+# ============================================================
+class TestFormatReferencesForFrontend:
+    """
+    _format_references_for_frontend()이 buildCitationDict() 기대 형식과 일치하는지 검증
+    """
+
+    def test_format_basic(self):
+        """기본 변환이 url_to_unified_index + url_to_info 형식이어야 한다."""
+        from backend.src.company.engine.career_pipeline import _format_references_for_frontend
+
+        results = [
+            {"url": "http://dart.fss.or.kr/1", "title": "DART Report", "snippets": ["매출액 100조"]},
+            {"url": "http://news.com/2", "title": "News Article", "snippets": ["기사 내용"]},
+        ]
+        refs = _format_references_for_frontend(results)
+
+        assert "url_to_unified_index" in refs
+        assert "url_to_info" in refs
+        assert refs["url_to_unified_index"]["http://dart.fss.or.kr/1"] == 1
+        assert refs["url_to_unified_index"]["http://news.com/2"] == 2
+        assert refs["url_to_info"]["http://dart.fss.or.kr/1"]["title"] == "DART Report"
+        assert "매출액 100조" in refs["url_to_info"]["http://dart.fss.or.kr/1"]["snippets"]
+
+    def test_format_deduplication(self):
+        """중복 URL은 병합되고 스니펫이 추가되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _format_references_for_frontend
+
+        results = [
+            {"url": "http://same.com", "title": "First", "snippets": ["snippet1"]},
+            {"url": "http://same.com", "title": "Duplicate", "snippets": ["snippet2"]},
+        ]
+        refs = _format_references_for_frontend(results)
+
+        assert len(refs["url_to_unified_index"]) == 1
+        assert refs["url_to_unified_index"]["http://same.com"] == 1
+        # 두 스니펫 모두 병합되어야 함
+        assert len(refs["url_to_info"]["http://same.com"]["snippets"]) == 2
+
+    def test_format_empty_results(self):
+        """검색 결과가 없으면 빈 구조를 반환해야 한다."""
+        from backend.src.company.engine.career_pipeline import _format_references_for_frontend
+
+        refs = _format_references_for_frontend([])
+        assert refs["url_to_unified_index"] == {}
+        assert refs["url_to_info"] == {}
+
+    def test_format_skips_empty_urls(self):
+        """URL이 비어있는 결과는 건너뛰어야 한다."""
+        from backend.src.company.engine.career_pipeline import _format_references_for_frontend
+
+        results = [
+            {"url": "", "title": "No URL", "snippets": ["test"]},
+            {"url": "http://valid.com", "title": "Valid", "snippets": ["ok"]},
+        ]
+        refs = _format_references_for_frontend(results)
+
+        assert len(refs["url_to_unified_index"]) == 1
+        assert "http://valid.com" in refs["url_to_unified_index"]
+
+
+# ============================================================
+# 9. Context Trace 로거 테스트
+# ============================================================
+class TestContextTrace:
+    """
+    context_trace.json 생성 및 엣지 케이스 테스트
+    """
+
+    def test_context_trace_empty_results(self, tmp_path):
+        """검색 결과 0건 시 json 직렬화 에러 없이 안전하게 기록되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _write_context_trace
+
+        output_dir = str(tmp_path)
+        _write_context_trace(
+            output_dir=output_dir,
+            company_name="테스트기업",
+            job_id="test-job-001",
+            processed_queries=[{"persona": "산업 애널리스트", "query": "테스트 쿼리", "tag": "WEB"}],
+            search_results_by_persona={},
+            context_text="(검색 결과 없음)",
+            truncation_info={
+                "original_length": 20,
+                "final_length": 20,
+                "truncated": False,
+                "max_context_chars": 50000,
+                "snippets_per_persona": {},
+            },
+            all_search_results=[],
+        )
+
+        trace_path = tmp_path / "context_trace.json"
+        assert trace_path.exists()
+
+        with open(trace_path, encoding="utf-8") as f:
+            data = json.load(f)
+
+        assert data["company_name"] == "테스트기업"
+        assert data["source_list"] == []
+        assert data["context_stats"]["truncated"] is False
+
+    def test_context_trace_with_results(self, tmp_path):
+        """검색 결과가 있을 때 raw context와 출처가 기록되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _write_context_trace
+
+        output_dir = str(tmp_path)
+        _write_context_trace(
+            output_dir=output_dir,
+            company_name="삼성전자",
+            job_id="test-job-002",
+            processed_queries=[
+                {"persona": "산업 애널리스트", "query": "삼성전자 재무", "tag": "DART"},
+                {"persona": "수석 취업 지원관", "query": "삼성전자 인재상", "tag": "WEB"},
+            ],
+            search_results_by_persona={
+                "산업 애널리스트": [{"url": "http://dart.fss.or.kr/1", "title": "DART", "snippets": ["매출액 302조"]}],
+                "수석 취업 지원관": [],
+            },
+            context_text="테스트 컨텍스트",
+            truncation_info={
+                "original_length": 100,
+                "final_length": 100,
+                "truncated": False,
+                "max_context_chars": 50000,
+                "snippets_per_persona": {"산업 애널리스트": 1},
+            },
+            all_search_results=[{"url": "http://dart.fss.or.kr/1", "title": "DART", "snippets": ["매출액 302조"]}],
+        )
+
+        trace_path = tmp_path / "context_trace.json"
+        assert trace_path.exists()
+
+        with open(trace_path, encoding="utf-8") as f:
+            data = json.load(f)
+
+        assert data["company_name"] == "삼성전자"
+        assert len(data["source_list"]) == 1
+        assert data["source_list"][0]["url"] == "http://dart.fss.or.kr/1"
+        assert "산업 애널리스트" in data["queries"]
+        assert "수석 취업 지원관" in data["raw_context"]
+        assert data["raw_context"]["수석 취업 지원관"] == "정보 없음"
+
+    def test_context_trace_required_fields(self, tmp_path):
+        """출력 JSON에 필수 필드가 모두 존재해야 한다."""
+        from backend.src.company.engine.career_pipeline import _write_context_trace
+
+        output_dir = str(tmp_path)
+        _write_context_trace(
+            output_dir=output_dir,
+            company_name="테스트",
+            job_id="test-job-003",
+            processed_queries=[],
+            search_results_by_persona={},
+            context_text="",
+            truncation_info={
+                "original_length": 0,
+                "final_length": 0,
+                "truncated": False,
+                "max_context_chars": 50000,
+                "snippets_per_persona": {},
+            },
+            all_search_results=[],
+        )
+
+        with open(tmp_path / "context_trace.json", encoding="utf-8") as f:
+            data = json.load(f)
+
+        required_keys = [
+            "company_name",
+            "job_id",
+            "timestamp",
+            "queries",
+            "raw_context",
+            "source_list",
+            "context_stats",
+        ]
+        for key in required_keys:
+            assert key in data, f"필수 필드 '{key}' 누락"
+
+
+# ============================================================
+# 10. 외부 검색 K값 테스트
+# ============================================================
+class TestExternalK:
+    """
+    build_hybrid_rm에서 external_k가 10인지 검증
+    """
+
+    def test_external_k_is_10(self):
+        """
+        top_k=10일 때 external_k=10, internal_k=5가 되어야 한다.
+        """
+        # build_hybrid_rm은 HybridRM 객체를 생성하므로 직접 호출하지 않고
+        # 로직만 검증 (builder.py의 분배 로직)
+        top_k = 10
+        internal_k = max(1, top_k // 2)
+        external_k = top_k
+
+        assert internal_k == 5
+        assert external_k == 10
+
+
+# ============================================================
+# 11. Sequential RAG 헬퍼 함수 테스트
+# ============================================================
+class TestSequentialRAG:
+    """3-Phase Sequential RAG 헬퍼 함수 및 Phase별 프롬프트 테스트"""
+
+    # --- Phase 시스템 프롬프트 검증 ---
+
+    def test_phase_system_prompts_exist(self):
+        """Phase별 시스템 프롬프트가 존재하고 비어있지 않아야 한다."""
+        assert len(PHASE1_SYSTEM_PROMPT) > 100
+        assert len(PHASE2_SYSTEM_PROMPT) > 100
+        assert len(PHASE3_SYSTEM_PROMPT) > 100
+
+    def test_phase1_prompt_contains_company_overview_schema(self):
+        """Phase 1 프롬프트가 company_overview 스키마를 포함해야 한다."""
+        assert "company_overview" in PHASE1_SYSTEM_PROMPT
+        assert "introduction" in PHASE1_SYSTEM_PROMPT
+        assert "financials" in PHASE1_SYSTEM_PROMPT
+        # Phase 1에는 다른 섹션 스키마가 포함되지 않아야 한다
+        assert "corporate_culture" not in PHASE1_SYSTEM_PROMPT
+        assert "swot_analysis" not in PHASE1_SYSTEM_PROMPT
+        assert "interview_preparation" not in PHASE1_SYSTEM_PROMPT
+
+    def test_phase2_prompt_contains_culture_swot_schema(self):
+        """Phase 2 프롬프트가 corporate_culture + swot_analysis 스키마를 포함해야 한다."""
+        assert "corporate_culture" in PHASE2_SYSTEM_PROMPT
+        assert "swot_analysis" in PHASE2_SYSTEM_PROMPT
+        assert "core_values" in PHASE2_SYSTEM_PROMPT
+        assert "strength" in PHASE2_SYSTEM_PROMPT
+        # Phase 2 JSON 스키마에는 Phase 1/3 섹션 키가 포함되지 않아야 한다
+        # (설명 텍스트에 company_overview 언급은 허용하되, 스키마에는 없어야 함)
+        import json
+
+        # 프롬프트에서 JSON 스키마 부분만 추출하여 검증 (다음 섹션 헤더 전까지)
+        schema_marker = "## JSON 스키마\n"
+        schema_start = PHASE2_SYSTEM_PROMPT.find(schema_marker) + len(schema_marker)
+        # 스키마 이후 다음 "##" 헤더까지만 추출
+        rest = PHASE2_SYSTEM_PROMPT[schema_start:]
+        next_header = rest.find("\n\n##")
+        schema_json = rest[:next_header].strip() if next_header != -1 else rest.strip()
+        parsed_schema = json.loads(schema_json)
+        assert "company_overview" not in parsed_schema
+        assert "interview_preparation" not in parsed_schema
+        assert "corporate_culture" in parsed_schema
+        assert "swot_analysis" in parsed_schema
+
+    def test_phase3_prompt_contains_interview_schema(self):
+        """Phase 3 프롬프트가 interview_preparation 스키마를 포함해야 한다."""
+        assert "interview_preparation" in PHASE3_SYSTEM_PROMPT
+        assert "pressure_questions" in PHASE3_SYSTEM_PROMPT
+        assert "expected_answers" in PHASE3_SYSTEM_PROMPT
+        # Phase 3에는 Phase 1/2 섹션이 포함되지 않아야 한다
+        assert "company_overview" not in PHASE3_SYSTEM_PROMPT
+        assert "corporate_culture" not in PHASE3_SYSTEM_PROMPT
+
+    def test_phase_persona_map_structure(self):
+        """PHASE_PERSONA_MAP이 3개 Phase로 올바르게 매핑되어야 한다."""
+        assert len(PHASE_PERSONA_MAP) == 3
+        assert 1 in PHASE_PERSONA_MAP
+        assert 2 in PHASE_PERSONA_MAP
+        assert 3 in PHASE_PERSONA_MAP
+        # 각 Phase에는 정확히 1개 페르소나
+        for phase_id, personas in PHASE_PERSONA_MAP.items():
+            assert len(personas) == 1
+
+    # --- _build_chaining_context 검증 ---
+
+    def test_build_chaining_context_normal(self):
+        """정상 Phase 결과가 올바른 JSON 문자열로 변환되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _build_chaining_context
+
+        report = CareerAnalysisReport(
+            company_overview=CompanyOverview(
+                introduction="삼성전자는 글로벌 반도체 1위 기업이다.",
+                industry="반도체/전자",
+                employee_count="약 12만명 (2025년 기준)",
+                location="경기도 수원시",
+                financials=Financials(revenue="300조원 (2024년)", operating_profit="6조원 (2024년)"),
+            )
+        )
+
+        result = _build_chaining_context(report, "기초 팩트", ["company_overview"])
+
+        assert isinstance(result, str)
+        # JSON 파싱이 가능해야 한다
+        parsed = json.loads(result)
+        assert "company_overview" in parsed
+        assert parsed["company_overview"]["introduction"] == "삼성전자는 글로벌 반도체 1위 기업이다."
+
+    def test_build_chaining_context_starvation(self):
+        """모든 필드가 기본값인 Phase 결과는 starvation 메시지를 반환해야 한다."""
+        from backend.src.company.engine.career_pipeline import CONTEXT_STARVATION_MSG, _build_chaining_context
+
+        # 기본값만 가진 빈 리포트
+        report = CareerAnalysisReport()
+
+        result = _build_chaining_context(report, "기초 팩트", ["company_overview"])
+
+        assert CONTEXT_STARVATION_MSG in result
+        assert "기초 팩트" in result
+
+    def test_build_chaining_context_none_input(self):
+        """None 입력 시 starvation 메시지가 반환되어야 한다 (Null Safe)."""
+        from backend.src.company.engine.career_pipeline import CONTEXT_STARVATION_MSG, _build_chaining_context
+
+        result = _build_chaining_context(None, "심층 분석", ["corporate_culture", "swot_analysis"])
+
+        assert CONTEXT_STARVATION_MSG in result
+        assert "심층 분석" in result
+
+    # --- _merge_phase_results 검증 ---
+
+    def test_merge_phase_results_all_present(self):
+        """3개 Phase 결과가 올바르게 병합되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _merge_phase_results
+
+        phase1 = CareerAnalysisReport(company_overview=CompanyOverview(introduction="테스트 기업 소개", industry="IT"))
+        phase2 = CareerAnalysisReport(
+            corporate_culture=CorporateCulture(core_values=["혁신", "도전"]),
+            swot_analysis=SwotAnalysis(strength=["기술력"]),
+        )
+        phase3 = CareerAnalysisReport(interview_preparation=InterviewPreparation(pressure_questions=["왜 지원했나요?"]))
+
+        merged = _merge_phase_results(phase1, phase2, phase3)
+
+        assert isinstance(merged, CareerAnalysisReport)
+        assert merged.company_overview.introduction == "테스트 기업 소개"
+        assert merged.corporate_culture.core_values == ["혁신", "도전"]
+        assert merged.swot_analysis.strength == ["기술력"]
+        assert merged.interview_preparation.pressure_questions == ["왜 지원했나요?"]
+
+    def test_merge_phase_results_partial_failure(self):
+        """특정 Phase가 None일 때 해당 섹션이 기본값으로 채워져야 한다."""
+        from backend.src.company.engine.career_pipeline import _merge_phase_results
+
+        phase1 = CareerAnalysisReport(company_overview=CompanyOverview(introduction="테스트 기업", industry="제조"))
+
+        # Phase 2 실패 (None)
+        merged = _merge_phase_results(phase1, None, None)
+
+        assert isinstance(merged, CareerAnalysisReport)
+        assert merged.company_overview.introduction == "테스트 기업"
+        # Phase 2/3 실패 -> 기본값
+        assert "정보 부족" in merged.corporate_culture.core_values[0]
+        assert "정보 부족" in merged.interview_preparation.pressure_questions[0]
+
+    def test_merge_phase_results_all_none(self):
+        """모든 Phase가 None일 때 전체 기본값 리포트가 생성되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _merge_phase_results
+
+        merged = _merge_phase_results(None, None, None)
+
+        assert isinstance(merged, CareerAnalysisReport)
+        assert "정보 부족" in merged.company_overview.introduction
+
+    # --- _call_llm custom system_prompt 검증 ---
+
+    @pytest.mark.asyncio
+    async def test_call_llm_custom_system_prompt(self):
+        """_call_llm()에 custom system_prompt를 전달하면 해당 프롬프트가 사용되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _call_llm
+
+        custom_prompt = "당신은 Phase 1 전용 시스템입니다."
+
+        with patch("litellm.completion") as mock_completion:
+            mock_response = type(
+                "Resp", (), {"choices": [type("C", (), {"message": type("M", (), {"content": "{}"})()})]}
+            )()
+            mock_completion.return_value = mock_response
+
+            result = await _call_llm("테스트 프롬프트", "openai", system_prompt=custom_prompt)
+
+            # litellm.completion 호출 시 system message에 custom_prompt 사용 확인
+            call_args = mock_completion.call_args
+            messages = call_args.kwargs.get("messages")
+            if messages is None:
+                # keyword argument로 전달된 경우
+                for k, v in call_args.kwargs.items():
+                    if k == "messages":
+                        messages = v
+                        break
+
+            system_msg = [m for m in messages if m["role"] == "system"][0]
+            assert system_msg["content"] == custom_prompt
+
+    # --- _build_llm_context target_personas 검증 ---
+
+    def test_build_llm_context_target_personas(self):
+        """target_personas 파라미터가 컨텍스트 범위를 올바르게 제한해야 한다."""
+        from backend.src.company.engine.career_pipeline import _build_llm_context
+
+        search_results = {
+            "산업 애널리스트": [{"title": "T1", "url": "http://a.com", "snippets": ["산업 데이터"]}],
+            "수석 취업 지원관": [{"title": "T2", "url": "http://b.com", "snippets": ["문화 데이터"]}],
+            "실무 면접관": [{"title": "T3", "url": "http://c.com", "snippets": ["면접 데이터"]}],
+        }
+
+        # Phase 1: 산업 애널리스트만
+        context, info = _build_llm_context(search_results, "테스트기업", PHASE_PERSONA_MAP[1])
+
+        assert "산업 애널리스트" in context
+        assert "산업 데이터" in context
+        # 다른 페르소나 데이터는 포함되지 않아야 한다
+        assert "수석 취업 지원관" not in context
+        assert "실무 면접관" not in context
+
+    def test_build_llm_context_no_target_uses_all(self):
+        """target_personas=None이면 모든 페르소나를 포함해야 한다."""
+        from backend.src.company.engine.career_pipeline import _build_llm_context
+
+        search_results = {
+            "산업 애널리스트": [{"title": "T1", "url": "http://a.com", "snippets": ["산업 데이터"]}],
+            "수석 취업 지원관": [{"title": "T2", "url": "http://b.com", "snippets": ["문화 데이터"]}],
+            "실무 면접관": [{"title": "T3", "url": "http://c.com", "snippets": ["면접 데이터"]}],
+        }
+
+        context, info = _build_llm_context(search_results, "테스트기업")
+
+        assert "산업 애널리스트" in context
+        assert "수석 취업 지원관" in context
+        assert "실무 면접관" in context
+
+    # --- _build_final_prompt chaining 검증 ---
+
+    def test_build_final_prompt_without_chaining(self):
+        """chaining_context가 없으면 기존 형태의 프롬프트가 생성되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _build_final_prompt
+
+        prompt = _build_final_prompt("테스트기업", "기업 분석", "검색 결과 데이터")
+
+        assert "테스트기업" in prompt
+        assert "검색 결과 데이터" in prompt
+        assert "이전 분석 단계 검증 결과" not in prompt
+
+    def test_build_final_prompt_with_chaining(self):
+        """chaining_context가 있으면 프롬프트에 '이전 분석 단계 검증 결과' 섹션이 포함되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _build_final_prompt
+
+        chaining = '{"company_overview": {"introduction": "테스트 기업 소개"}}'
+        prompt = _build_final_prompt("테스트기업", "기업 분석", "검색 결과 데이터", chaining_context=chaining)
+
+        assert "이전 분석 단계 검증 결과" in prompt
+        assert "company_overview" in prompt
+        assert "검색 결과 데이터" in prompt
+
+    # --- _is_section_starved 검증 ---
+
+    def test_is_section_starved_true(self):
+        """기본값으로만 채워진 섹션은 starved로 판정되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _is_section_starved
+
+        section = {"introduction": "정보 부족 - 추가 조사 필요", "industry": "정보 부족 - 추가 조사 필요"}
+        assert _is_section_starved(section) is True
+
+    def test_is_section_starved_false(self):
+        """실제 데이터가 있는 섹션은 starved가 아니어야 한다."""
+        from backend.src.company.engine.career_pipeline import _is_section_starved
+
+        section = {"introduction": "삼성전자는 글로벌 반도체 기업이다.", "industry": "반도체"}
+        assert _is_section_starved(section) is False

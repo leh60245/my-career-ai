@@ -28,24 +28,28 @@ def get_safe_dir_name(name: str, fallback: str = "unknown") -> str:
 
 def create_run_directory(base_dir: str, company_id: int, company_name: str, job_id: str = None) -> str:
     """
-    실행 결과를 저장할 타임스탬프 기반 디렉토리를 생성합니다.
-    형식: {base_dir}/YYYYMMDD_HHMMSS_{company_name}_{job_id_suffix}
+    실행 결과를 저장할 디렉토리를 생성합니다.
+    형식: results/{company_name}/{job_id}
+
+    Args:
+        base_dir: 기본 경로 ('results')
+        company_id: 기업 ID (fallback용)
+        company_name: 기업명
+        job_id: Job UUID
+
+    Returns:
+        생성된 디렉토리 절대 경로
     """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_company = get_safe_dir_name(company_name, fallback=f"comp_{company_id}")
 
-    # Job ID가 있으면 짧게 접미사로 사용
-    suffix = f"_{job_id[:8]}" if job_id else ""
-    dir_name = f"{timestamp}_{safe_company}{suffix}"
+    if job_id:
+        dir_name = os.path.join(safe_company, job_id)
+    else:
+        # job_id가 없는 경우 타임스탬프 fallback
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dir_name = os.path.join(safe_company, timestamp)
 
     full_path = os.path.abspath(os.path.join(base_dir, dir_name))
-
-    # 중복 시 순번 붙임
-    if os.path.exists(full_path):
-        counter = 1
-        while os.path.exists(f"{full_path}_{counter}"):
-            counter += 1
-        full_path = f"{full_path}_{counter}"
 
     os.makedirs(full_path, exist_ok=True)
     logger.info(f"Created run directory: {full_path}")

@@ -1,7 +1,7 @@
 /**
  * API Client (axios instance)
  *
- * Base URL: http://localhost:8000 (직접 연결)
+ * Base URL: VITE_API_BASE_URL 또는 상대 경로('/api'는 Vite proxy 사용)
  * Request Interceptor: 현재 Mock User ID 헤더 전송
  * Response Interceptor: 에러 핸들링 (401, 403, 400 중앙 처리)
  *
@@ -9,7 +9,7 @@
  */
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 /** 현재 활성 사용자 ID (AuthContext에 의해 동적으로 갱신됨) */
 let _currentUserId = 1;

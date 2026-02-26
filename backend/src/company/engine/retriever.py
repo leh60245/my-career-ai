@@ -56,12 +56,8 @@ class PostgresRM(dspy.Retrieve):
         search_k = k if k is not None else self.k
         collected_results = []
 
-        # Thread-safe Loop 확보
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        # Running loop 사용 (HybridRM._persistent_loop에서 실행 중)
+        loop = asyncio.get_running_loop()
 
         # [핵심] Loop 내부에서 독립적인 DB 연결 사용
         async def _thread_safe_search(query_text: str):
@@ -123,6 +119,10 @@ class HybridRM(dspy.Retrieve):
         self.internal_k = internal_k
         self.external_k = external_k
         self.usage = 0
+
+        # 영속 이벤트 루프: AsyncOpenAI 등 async 클라이언트가 동일 루프에 바인딩되도록 보장
+        self._persistent_loop = asyncio.new_event_loop()
+        nest_asyncio.apply(self._persistent_loop)
 
         self.internal_rm = PostgresRM(k=internal_k)
         serper_key = AI_CONFIG.get("serper_api_key")
@@ -190,12 +190,12 @@ class HybridRM(dspy.Retrieve):
         self.usage += len(queries)
         final_results = []
 
-        # Async Loop 확보
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        # 영속 이벤트 루프 재사용 (AsyncOpenAI 크로스-루프 데드락 방지)
+        if self._persistent_loop.is_closed():
+            self._persistent_loop = asyncio.new_event_loop()
+            nest_asyncio.apply(self._persistent_loop)
+        loop = self._persistent_loop
+        asyncio.set_event_loop(loop)
 
         async def _execute_hybrid_search(query_text: str):
             # [핵심] 실행 직전에 도구들 준비 (데이터 로딩 포함)

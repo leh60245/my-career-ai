@@ -14,13 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.src.common.config import TOPICS
 from backend.src.common.database.connection import AsyncDatabaseEngine
+from backend.src.common.enums import ReportJobStatus
 from backend.src.common.middlewares.auth import check_admin_permission
 from backend.src.company.schemas.company import CompanyResponse
-from backend.src.company.schemas.generated_report import (
-    GeneratedReportListItem,
-    GeneratedReportResponse,
-    GenerateReportRequest,
-)
+from backend.src.company.schemas.generated_report import GeneratedReportResponse, GenerateReportRequest
 from backend.src.company.schemas.report_job import (
     AdminAnalysisRequestResponse,
     AdminAnalysisRequestsResponse,
@@ -35,7 +32,7 @@ from backend.src.company.schemas.report_job import (
 from backend.src.company.services.company_service import CompanyService
 from backend.src.company.services.generated_report_service import GeneratedReportService
 from backend.src.company.services.report_job_service import ReportJobService
-from backend.src.company.services.storm_service import StormService
+from backend.src.company.services.storm_service import JOBS, StormService
 from backend.src.user.services import UserService
 
 
@@ -116,21 +113,24 @@ async def search_companies(query: str, service: CompanyService = Depends(get_com
     return [CompanyResponse.model_validate(c) for c in companies]
 
 
-@router.get("/reports/company/{company_name}", response_model=list[GeneratedReportListItem])
+@router.get("/reports/company/{company_name}", response_model=list[GeneratedReportResponse])
 async def get_reports_by_company(
     company_name: str, service: GeneratedReportService = Depends(get_generated_report_service)
-) -> list[GeneratedReportListItem]:
+) -> list[GeneratedReportResponse]:
     """
     특정 기업의 모든 생성 리포트를 조회한다.
+
+    리포트 뷰어에서 기업 전체 리포트를 조회할 때 사용.
+    report_content 필드를 포함하여 반환.
 
     Args:
         company_name: 기업명
 
     Returns:
-        해당 기업의 생성 리포트 목록 (최신순)
+        해당 기업의 생성 리포트 목록 (최신순, report_content 포함)
     """
     reports = await service.get_reports_by_company_name(company_name)
-    return [GeneratedReportListItem.model_validate(r) for r in reports]
+    return [GeneratedReportResponse.model_validate(r) for r in reports]
 
 
 # ============================================================
@@ -379,6 +379,17 @@ async def approve_analysis_request(
         # 기존 report_jobs 처리 로직과 통합
         job = await job_service.get_job(job_id)
         if job:
+            # 관리자 승인 경로: create_job()이 호출되지 않아 JOBS에 미등록 상태.
+            # 프론트엔드 polling이 즉시 응답하도록 메모리 상태를 사전 등록한다.
+            JOBS.setdefault(
+                job_id,
+                {
+                    "status": ReportJobStatus.PENDING.value,
+                    "progress": 0,
+                    "message": "관리자 승인 완료. 분석을 시작합니다.",
+                    "report_id": None,
+                },
+            )
             background_tasks.add_task(
                 storm_service.run_pipeline, job_id=job_id, company_name=job.company_name, topic=job.topic
             )
