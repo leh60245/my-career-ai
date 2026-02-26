@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ReportJobResponse(BaseModel):
     # 식별 정보
-    job_id: str = Field(..., alias="id", description="작업 고유 ID (UUID)")
+    job_id: str = Field(..., validation_alias="id", description="작업 고유 ID (UUID)")
     status: str = Field(..., description="현재 상태 (PENDING, PROCESSING, COMPLETED, FAILED)")
 
     # 요청 정보
@@ -33,7 +33,7 @@ class ReportJobResponse(BaseModel):
 
 
 class ReportSummary(BaseModel):
-    job_id: str = Field(..., alias="id")
+    job_id: str = Field(..., validation_alias="id")
     company_name: str
     topic: str
     status: str
@@ -58,9 +58,10 @@ class CompanyAnalysisRequestCreate(BaseModel):
     기업 분석 요청 생성 시 입력 데이터.
 
     구직자가 DB에 없는 기업에 대해 분석을 요청할 때 사용.
+    company_id는 DB에 없는 기업의 경우 None이 될 수 있음.
     """
 
-    company_id: int = Field(..., description="분석을 요청한 기업 ID")
+    company_id: int | None = Field(None, description="분석을 요청한 기업 ID (DB에 없는 기업은 None)")
     company_name: str = Field(..., description="기업명")
     topic: str = Field(..., description="분석 주제 (e.g., '채용정보 분석', '기업문화')")
 
@@ -76,8 +77,8 @@ class CompanyAnalysisRequestResponse(BaseModel):
     구직자가 조회할 분석 요청 상태 정보.
     """
 
-    job_id: str = Field(..., alias="id", description="요청 ID (UUID)")
-    company_id: int = Field(..., description="기업 ID")
+    job_id: str = Field(..., validation_alias="id", description="요청 ID (UUID)")
+    company_id: int | None = Field(None, description="기업 ID (DB에 없는 기업은 None)")
     company_name: str = Field(..., description="기업명")
     topic: str = Field(..., description="분석 주제")
     status: str = Field(..., description="현재 상태 (PENDING, PROCESSING, COMPLETED, FAILED, REJECTED)")
@@ -102,9 +103,9 @@ class AdminAnalysisRequestResponse(BaseModel):
     사용자 정보와 함께 표시하여 관리자가 승인/반려 판단을 도움.
     """
 
-    job_id: str = Field(..., alias="id", description="요청 ID (UUID)")
-    user_id: int = Field(..., description="요청한 구직자 user_id")
-    company_id: int = Field(..., description="기업 ID")
+    job_id: str = Field(..., validation_alias="id", description="요청 ID (UUID)")
+    user_id: int | None = Field(None, description="요청한 구직자 user_id (관리자 직접 생성 시 None)")
+    company_id: int | None = Field(None, description="기업 ID (DB에 없는 기업은 None)")
     company_name: str = Field(..., description="기업명")
     topic: str = Field(..., description="분석 주제")
     status: str = Field(..., description="현재 상태")

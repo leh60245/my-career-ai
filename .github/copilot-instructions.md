@@ -64,13 +64,14 @@ class MyService:
 ## Commands
 
 ```bash
-# Backend (cd backend first, activate conda env 'enterprise-storm')
+# Backend 
 conda activate enterprise-storm
-python -m uvicorn backend.main:app --reload --port 8000 --reload-dir backend/src
+uvicorn backend.main:app --reload --port 8000 --reload-dir backend/src
 alembic upgrade head                              # apply migrations
 alembic revision --autogenerate -m "description"  # generate migration
 
-# Frontend (cd frontend/react-app)
+# Frontend 
+cd frontend/react-app
 npm run dev     # dev server
 npm run build   # production build
 

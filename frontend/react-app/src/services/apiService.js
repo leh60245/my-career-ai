@@ -1,6 +1,6 @@
 /**
  * API Service Layer
- * Backend API(localhost:8000)와의 통신을 담당합니다.
+ * Backend API(VITE_API_BASE_URL 또는 Vite proxy)와의 통신을 담당합니다.
  *
  * Backend Endpoints:
  *   GET  /                             → Health Check
@@ -16,7 +16,7 @@
 
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,

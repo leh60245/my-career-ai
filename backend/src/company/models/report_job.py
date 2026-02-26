@@ -24,7 +24,7 @@ class ReportJob(Base, TimestampMixin):
 
     # Primary Key & Basic Fields
     id: Mapped[str] = mapped_column("job_id", String, primary_key=True)
-    company_id: Mapped[int] = mapped_column(Integer, ForeignKey("companies.id"), nullable=False)
+    company_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("companies.id"), nullable=True)
     company_name: Mapped[str] = mapped_column(String(255), nullable=False)
     topic: Mapped[str] = mapped_column(String, nullable=False)
 
@@ -54,7 +54,7 @@ class ReportJob(Base, TimestampMixin):
     rejected_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="반려 시간")
 
     # Relationships
-    company: Mapped["Company"] = relationship("Company", back_populates="report_jobs")
+    company: Mapped["Company | None"] = relationship("Company", back_populates="report_jobs")
     requester: Mapped["User"] = relationship("User", foreign_keys=[user_id], lazy="select")
     approver: Mapped["User | None"] = relationship("User", foreign_keys=[approved_by], lazy="select")
     generated_report: Mapped["GeneratedReport | None"] = relationship(

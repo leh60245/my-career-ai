@@ -80,12 +80,13 @@ def build_lm_configs(provider: str = "openai") -> STORMWikiLMConfigs:
 def build_hybrid_rm(company_name: str, top_k: int = 10, min_score: float = 0.5) -> HybridRM:
     """
     HybridRM 생성 (데이터 로딩은 RM 내부에서 Lazy하게 수행됨)
+
+    외부(Serper) 검색은 top_k 그대로, 내부(Postgres) 검색은 top_k // 2로 설정합니다.
     """
-    # 내부/외부 비율 설정 (예: 반반)
-    half_k = max(1, top_k // 2)
+    internal_k = max(1, top_k // 2)
+    external_k = top_k
 
-    # 단순히 객체만 생성해서 리턴하면 끝
-    hybrid_rm = HybridRM(internal_k=half_k, external_k=half_k)
+    hybrid_rm = HybridRM(internal_k=internal_k, external_k=external_k)
 
-    logger.info(f"✓ HybridRM initialized (Total k={top_k})")
+    logger.info(f"HybridRM initialized (internal_k={internal_k}, external_k={external_k})")
     return hybrid_rm

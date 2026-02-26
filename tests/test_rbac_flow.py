@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.src.common.enums import ReportJobStatus
 from backend.src.common.middlewares.auth import check_admin_permission
-from backend.src.common.repositories.base_repository import EntityNotFound
+from backend.src.common.repositories.base_repository import DuplicateEntity, EntityNotFound
 from backend.src.company.models.company import Company
 from backend.src.company.services.report_job_service import ReportJobService
 from backend.src.user.models import User
@@ -57,8 +57,8 @@ class TestAnalysisRequestFlow:
             topic="채용정보",
         )
 
-        # 두 번째 중복 요청 시 예외 발생 (EntityNotFound를 재사용)
-        with pytest.raises(EntityNotFound):
+        # 두 번째 중복 요청 시 예외 발생
+        with pytest.raises(DuplicateEntity):
             await service.submit_analysis_request(
                 user_id=job_seeker_user.id,
                 company_id=test_company.id,
@@ -266,8 +266,8 @@ class TestAdminAPIProtection:
         assert response.status_code == 201
         data = response.json()
         assert data["status"] == "PENDING"
-        # FastAPI serializes response_model with by_alias=True, so alias "id" is used (not field name "job_id")
-        assert "id" in data
+        # validation_alias="id"는 ORM의 .id 속성에서 읽기 전용. JSON 직렬화는 필드명 "job_id"를 사용
+        assert "job_id" in data
 
     async def test_submit_duplicate_request_api_blocked(
         self, client: AsyncClient, session: AsyncSession, job_seeker_user: User, test_company: Company

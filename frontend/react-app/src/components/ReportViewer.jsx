@@ -33,6 +33,9 @@ import ArticleIcon from '@mui/icons-material/Article';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getJobStatus, getReport, getReportByJobId, fetchReportsByCompany } from '../services/apiClient';
+import { ErrorBoundary } from './ErrorBoundary';
+import { ReportSkeletonLoader } from './ReportSkeletonLoader';
+import { StructuredReportViewer, StructuredAccordionViewer, parseReportContent } from './StructuredReportViewer';
 import '../styles/ReportViewer.css';
 
 /**
@@ -657,8 +660,15 @@ const ReportViewer = ({ jobId, companyName, initialStatus, onBack }) => {
 
   // ─── Derived data ─────────────────────────────
   const citationDict = useMemo(() => (report ? buildCitationDict(report.references_data) : {}), [report]);
-  const processedContent = useMemo(() => (report ? addInlineCitationLinks(report.report_content, report.references_data) : ''), [report]);
-  const toc = useMemo(() => extractTocFromMarkdown(report?.report_content), [report]);
+
+  /** 구조화 JSON 파싱 결과 */
+  const { data: structuredData, isStructured } = useMemo(
+    () => (report ? parseReportContent(report.report_content) : { data: null, isStructured: false }),
+    [report]
+  );
+
+  const processedContent = useMemo(() => (report && !isStructured ? addInlineCitationLinks(report.report_content, report.references_data) : ''), [report, isStructured]);
+  const toc = useMemo(() => (!isStructured ? extractTocFromMarkdown(report?.report_content) : []), [report, isStructured]);
 
   const hasConversationLog = Boolean(
     report?.conversation_log &&
@@ -679,13 +689,8 @@ const ReportViewer = ({ jobId, companyName, initialStatus, onBack }) => {
   if (isAccordionMode) {
     if (accordionLoading) {
       return (
-        <Container maxWidth="lg" sx={{ py: 4 }}>
-          <Paper elevation={3} sx={{ p: 4, textAlign: 'center' }}>
-            <CircularProgress size={50} />
-            <Typography variant="body1" sx={{ mt: 2 }}>
-              {companyName}의 분석 리포트를 불러오는 중...
-            </Typography>
-          </Paper>
+        <Container maxWidth="lg" sx={{ py: 3 }}>
+          <ReportSkeletonLoader variant="accordion" />
         </Container>
       );
     }
@@ -693,8 +698,25 @@ const ReportViewer = ({ jobId, companyName, initialStatus, onBack }) => {
     if (accordionError) {
       return (
         <Container maxWidth="lg" sx={{ py: 4 }}>
-          <Paper elevation={3} sx={{ p: 4 }}>
-            <Alert severity="error" sx={{ mb: 3 }}>{accordionError}</Alert>
+          <Paper
+            elevation={0}
+            sx={{
+              p: 4,
+              border: '1px solid',
+              borderColor: alpha('#e53935', 0.2),
+              borderRadius: 3,
+              bgcolor: alpha('#e53935', 0.03),
+              textAlign: 'center',
+            }}
+          >
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+              분석 데이터 로드 오류
+            </Typography>
+            <Typography variant="body1" sx={{ color: 'text.secondary', lineHeight: 1.8, mb: 3 }}>
+              현재 해당 기업의 데이터를 분석하는 데 어려움을 겪고 있습니다.
+              <br />
+              잠시 후 다시 시도해 주세요.
+            </Typography>
             <Button variant="contained" startIcon={<ArrowBackIcon />} onClick={onBack}>
               돌아가기
             </Button>
@@ -821,14 +843,27 @@ const ReportViewer = ({ jobId, companyName, initialStatus, onBack }) => {
                   </AccordionSummary>
                   <AccordionDetails sx={{ pt: 0, pb: 3, px: 3 }}>
                     <Divider sx={{ mb: 2 }} />
-                    <div className="markdown-container">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        components={markdownComponents}
-                      >
-                        {rptContent}
-                      </ReactMarkdown>
-                    </div>
+                    {/* 구조화 JSON / 기존 Markdown 자동 분기 */}
+                    {(() => {
+                      const { data: structuredData, isStructured } = parseReportContent(rpt.report_content);
+                      if (isStructured) {
+                        return (
+                          <ErrorBoundary>
+                            <StructuredAccordionViewer reportData={structuredData} />
+                          </ErrorBoundary>
+                        );
+                      }
+                      return (
+                        <div className="markdown-container">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={markdownComponents}
+                          >
+                            {rptContent}
+                          </ReactMarkdown>
+                        </div>
+                      );
+                    })()}
                     {/* References (inline) */}
                     {Object.keys(rptCitationDict).length > 0 && (
                       <Box sx={{ mt: 3 }}>
@@ -862,11 +897,10 @@ const ReportViewer = ({ jobId, companyName, initialStatus, onBack }) => {
   if (phase === 'polling') {
     return (
       <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Paper elevation={3} sx={{ p: 4, textAlign: 'center' }}>
+        <Paper elevation={0} sx={{ p: 4, textAlign: 'center', border: '1px solid', borderColor: 'grey.200', borderRadius: 2 }}>
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-            <CircularProgress size={60} />
             <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
-              {currentStatus === 'PENDING' ? '⏳ 작업 대기 중...' : '📋 리포트 생성 중...'}
+              {currentStatus === 'PENDING' ? '작업 대기 중...' : '리포트 생성 중...'}
             </Typography>
             <Typography variant="body1" color="textSecondary">
               {message || 'AI가 데이터를 분석하고 있습니다. 잠시만 기다려주세요.'}
@@ -877,6 +911,11 @@ const ReportViewer = ({ jobId, companyName, initialStatus, onBack }) => {
                 <Typography variant="body2" color="textSecondary" sx={{ mt: 0.5 }}>{progress}%</Typography>
               </Box>
             )}
+            {progress === 0 && (
+              <Box sx={{ width: '80%', mt: 1 }}>
+                <LinearProgress variant="indeterminate" sx={{ height: 8, borderRadius: 4 }} />
+              </Box>
+            )}
             <Chip label={`상태: ${statusLabel[currentStatus] || currentStatus}`} color={currentStatus === 'PENDING' ? 'info' : 'warning'} variant="outlined" size="small" />
             <Typography variant="caption" color="textSecondary">(폴링: {pollingCount}회)</Typography>
             <Button variant="outlined" startIcon={<ArrowBackIcon />} onClick={onBack} sx={{ mt: 2 }}>
@@ -884,6 +923,11 @@ const ReportViewer = ({ jobId, companyName, initialStatus, onBack }) => {
             </Button>
           </Box>
         </Paper>
+
+        {/* 스켈레톤 미리보기 - 리포트 형태 암시 */}
+        <Box sx={{ mt: 3, opacity: 0.6 }}>
+          <ReportSkeletonLoader variant="single" />
+        </Box>
       </Container>
     );
   }
@@ -894,10 +938,42 @@ const ReportViewer = ({ jobId, companyName, initialStatus, onBack }) => {
   if (phase === 'error') {
     return (
       <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Paper elevation={3} sx={{ p: 4 }}>
-          <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>
-          {statusInfo?.error_message && statusInfo.error_message !== error && (
-            <Typography variant="body2" component="pre" sx={{ backgroundColor: '#f5f5f5', p: 2, borderRadius: 1, overflow: 'auto', mb: 2, fontSize: '0.85rem', whiteSpace: 'pre-wrap' }}>
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 3, sm: 5 },
+            border: '1px solid',
+            borderColor: alpha('#e53935', 0.2),
+            borderRadius: 3,
+            bgcolor: alpha('#e53935', 0.03),
+            textAlign: 'center',
+          }}
+        >
+          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+            분석 데이터 로드 오류
+          </Typography>
+          <Typography variant="body1" sx={{ color: 'text.secondary', lineHeight: 1.8, mb: 2 }}>
+            현재 해당 기업의 데이터를 분석하는 데 어려움을 겪고 있습니다.
+            <br />
+            잠시 후 다시 시도해 주세요.
+          </Typography>
+          {statusInfo?.error_message && (
+            <Typography
+              variant="body2"
+              component="pre"
+              sx={{
+                backgroundColor: '#f5f5f5',
+                p: 2,
+                borderRadius: 1,
+                overflow: 'auto',
+                mb: 2,
+                fontSize: '0.85rem',
+                whiteSpace: 'pre-wrap',
+                textAlign: 'left',
+                maxWidth: 600,
+                mx: 'auto',
+              }}
+            >
               {statusInfo.error_message}
             </Typography>
           )}
@@ -914,13 +990,8 @@ const ReportViewer = ({ jobId, companyName, initialStatus, onBack }) => {
   // ════════════════════════════════════════════════
   if (phase === 'loading') {
     return (
-      <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Paper elevation={3} sx={{ p: 4, textAlign: 'center' }}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-            <CircularProgress size={50} />
-            <Typography variant="body1">리포트를 불러오는 중...</Typography>
-          </Box>
-        </Paper>
+      <Container maxWidth="lg" sx={{ py: 3 }}>
+        <ReportSkeletonLoader variant="single" />
       </Container>
     );
   }
@@ -930,118 +1001,196 @@ const ReportViewer = ({ jobId, companyName, initialStatus, onBack }) => {
   // ════════════════════════════════════════════════
   if (phase === 'done' && report) {
     return (
-      <Box sx={{ display: 'flex', minHeight: '100vh' }}>
-        {/* TOC 사이드바 */}
-        {toc.length > 0 && (
-          <TocSidebar toc={toc} open={tocOpen} onClose={() => setTocOpen(false)} />
-        )}
+      <ErrorBoundary>
+        <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+          {/* TOC 사이드바 (Markdown 모드 전용) */}
+          {!isStructured && toc.length > 0 && (
+            <TocSidebar toc={toc} open={tocOpen} onClose={() => setTocOpen(false)} />
+          )}
 
-        {/* 메인 콘텐츠 */}
-        <Box sx={{ flex: 1, overflow: 'auto' }}>
-          <Container maxWidth="lg" sx={{ py: 3 }}>
-            {/* 헤더 */}
-            <Paper elevation={3} sx={{ p: 3, mb: 3, backgroundColor: '#f5f5f5' }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  {toc.length > 0 && (
-                    <Tooltip title={tocOpen ? '목차 닫기' : '목차 열기'}>
-                      <IconButton onClick={() => setTocOpen(!tocOpen)} size="small">
-                        <MenuIcon />
-                      </IconButton>
-                    </Tooltip>
-                  )}
-                  <Box>
-                    <Typography variant="h4" sx={{ fontWeight: 'bold', mb: 0.5 }}>
-                      {report.company_name}
-                    </Typography>
-                    <Typography variant="body1" color="textSecondary">
-                      주제: {report.topic}
-                    </Typography>
-                    <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
-                      <Chip label={`모델: ${report.model_name}`} variant="outlined" size="small" />
-                      {report.created_at && (
-                        <Chip label={`생성: ${new Date(report.created_at).toLocaleDateString('ko-KR')}`} variant="outlined" size="small" />
-                      )}
-                      {hasConversationLog && (
-                        <Chip label="대화 로그 포함" color="info" variant="outlined" size="small" />
-                      )}
-                      {hasReferences && (
-                        <Chip label={`참고문헌 ${Object.keys(citationDict).length}개`} color="success" variant="outlined" size="small" />
-                      )}
+          {/* 메인 콘텐츠 */}
+          <Box sx={{ flex: 1, overflow: 'auto' }}>
+            <Container maxWidth="lg" sx={{ py: 3 }}>
+              {/* 헤더 */}
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 3,
+                  mb: 3,
+                  border: '1px solid',
+                  borderColor: 'grey.200',
+                  borderRadius: 2,
+                  bgcolor: 'grey.50',
+                }}
+              >
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'center' }, flexDirection: { xs: 'column', sm: 'row' }, gap: 2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    {!isStructured && toc.length > 0 && (
+                      <Tooltip title={tocOpen ? '목차 닫기' : '목차 열기'}>
+                        <IconButton onClick={() => setTocOpen(!tocOpen)} size="small">
+                          <MenuIcon />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    <Box
+                      sx={{
+                        width: 48,
+                        height: 48,
+                        borderRadius: 2,
+                        bgcolor: alpha('#1565c0', 0.1),
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <BusinessIcon sx={{ color: '#1565c0', fontSize: 28 }} />
+                    </Box>
+                    <Box>
+                      <Typography variant="h5" sx={{ fontWeight: 700, mb: 0.5 }}>
+                        {report.company_name}
+                      </Typography>
+                      <Typography variant="body2" color="textSecondary">
+                        주제: {report.topic}
+                      </Typography>
+                      <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+                        <Chip label={`모델: ${report.model_name}`} variant="outlined" size="small" />
+                        {report.created_at && (
+                          <Chip label={`생성: ${new Date(report.created_at).toLocaleDateString('ko-KR')}`} variant="outlined" size="small" />
+                        )}
+                        {isStructured && (
+                          <Chip label="구조화 리포트" color="primary" variant="outlined" size="small" />
+                        )}
+                        {hasConversationLog && (
+                          <Chip label="대화 로그 포함" color="info" variant="outlined" size="small" />
+                        )}
+                        {hasReferences && (
+                          <Chip label={`참고문헌 ${Object.keys(citationDict).length}개`} color="success" variant="outlined" size="small" />
+                        )}
+                      </Box>
                     </Box>
                   </Box>
+                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexShrink: 0 }}>
+                    {!isStructured && (
+                      <Tooltip title="HTML로 다운로드">
+                        <IconButton onClick={() => exportAsHtml(report, citationDict)} color="primary">
+                          <DownloadIcon />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    <Button variant="outlined" startIcon={<ArrowBackIcon />} onClick={onBack}>
+                      돌아가기
+                    </Button>
+                  </Box>
                 </Box>
-                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                  <Tooltip title="HTML로 다운로드">
-                    <IconButton onClick={() => exportAsHtml(report, citationDict)} color="primary">
-                      <DownloadIcon />
-                    </IconButton>
-                  </Tooltip>
-                  <Button variant="outlined" startIcon={<ArrowBackIcon />} onClick={onBack}>
-                    돌아가기
+              </Paper>
+
+              {/* ── 구조화 JSON 모드 ── */}
+              {isStructured && (
+                <>
+                  <StructuredReportViewer reportData={structuredData} companyName={report.company_name} />
+
+                  {/* 참고문헌 & 대화 로그 (보조 섹션) */}
+                  {(hasReferences || hasConversationLog) && (
+                    <Paper
+                      elevation={0}
+                      sx={{
+                        mt: 3,
+                        border: '1px solid',
+                        borderColor: 'grey.200',
+                        borderRadius: 2,
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <Tabs
+                        value={activeSection === 'report' ? 'references' : activeSection}
+                        onChange={(_, v) => setActiveSection(v)}
+                        variant="fullWidth"
+                        sx={{ borderBottom: '1px solid', borderColor: 'divider' }}
+                      >
+                        {hasReferences && <Tab value="references" label={`참고문헌 (${Object.keys(citationDict).length})`} />}
+                        {hasConversationLog && <Tab value="conversation" label="연구 대화 로그" />}
+                      </Tabs>
+                      <Box sx={{ p: 3 }}>
+                        {activeSection === 'references' && hasReferences && (
+                          <ReferencesPanel citationDict={citationDict} />
+                        )}
+                        {activeSection === 'conversation' && hasConversationLog && (
+                          <>
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                              STORM은 다양한 관점의 전문 페르소나가 주제를 깊이 있게 탐구한 대화를 기반으로 리포트를 생성합니다.
+                            </Typography>
+                            <ConversationLogViewer conversationLog={report.conversation_log} />
+                          </>
+                        )}
+                      </Box>
+                    </Paper>
+                  )}
+                </>
+              )}
+
+              {/* ── 기존 Markdown 모드 ── */}
+              {!isStructured && (
+                <>
+                  {/* 탭 네비게이션 */}
+                  <Paper elevation={0} sx={{ mb: 3, border: '1px solid', borderColor: 'grey.200', borderRadius: 2, overflow: 'hidden' }}>
+                    <Tabs value={activeSection} onChange={(_, v) => setActiveSection(v)} variant="fullWidth">
+                      <Tab value="report" label="리포트" />
+                      {hasReferences && <Tab value="references" label={`참고문헌 (${Object.keys(citationDict).length})`} />}
+                      {hasConversationLog && <Tab value="conversation" label="연구 대화 로그" />}
+                    </Tabs>
+                  </Paper>
+
+                  {/* 탭 콘텐츠: 리포트 */}
+                  {activeSection === 'report' && (
+                    <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'grey.200', borderRadius: 2 }}>
+                      <div className="markdown-container">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                          {processedContent}
+                        </ReactMarkdown>
+                      </div>
+                    </Paper>
+                  )}
+
+                  {/* 탭 콘텐츠: 참고문헌 */}
+                  {activeSection === 'references' && hasReferences && (
+                    <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'grey.200', borderRadius: 2 }}>
+                      <Typography variant="h5" sx={{ fontWeight: 'bold', mb: 3 }}>
+                        참고 문헌
+                      </Typography>
+                      <ReferencesPanel citationDict={citationDict} />
+                    </Paper>
+                  )}
+
+                  {/* 탭 콘텐츠: 대화 로그 */}
+                  {activeSection === 'conversation' && hasConversationLog && (
+                    <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'grey.200', borderRadius: 2 }}>
+                      <Typography variant="h5" sx={{ fontWeight: 'bold', mb: 1 }}>
+                        연구 대화 로그
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                        STORM은 다양한 관점의 전문 페르소나가 주제를 깊이 있게 탐구한 대화를 기반으로 리포트를 생성합니다.
+                      </Typography>
+                      <ConversationLogViewer conversationLog={report.conversation_log} />
+                    </Paper>
+                  )}
+                </>
+              )}
+
+              {/* 하단 액션 */}
+              <Box sx={{ mt: 4, display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
+                <Button variant="contained" startIcon={<ArrowBackIcon />} onClick={onBack}>
+                  새로운 리포트 생성
+                </Button>
+                {!isStructured && (
+                  <Button variant="outlined" startIcon={<DownloadIcon />} onClick={() => exportAsHtml(report, citationDict)}>
+                    HTML 다운로드
                   </Button>
-                </Box>
+                )}
               </Box>
-            </Paper>
-
-            {/* 탭 네비게이션 */}
-            <Paper elevation={2} sx={{ mb: 3 }}>
-              <Tabs value={activeSection} onChange={(_, v) => setActiveSection(v)} variant="fullWidth">
-                <Tab value="report" label="📄 리포트" />
-                {hasReferences && <Tab value="references" label={`📚 참고문헌 (${Object.keys(citationDict).length})`} />}
-                {hasConversationLog && <Tab value="conversation" label="💬 연구 대화 로그" />}
-              </Tabs>
-            </Paper>
-
-            {/* ── 탭 콘텐츠: 리포트 ── */}
-            {activeSection === 'report' && (
-              <Paper elevation={2} sx={{ p: 4 }}>
-                <div className="markdown-container">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={markdownComponents}
-                  >
-                    {processedContent}
-                  </ReactMarkdown>
-                </div>
-              </Paper>
-            )}
-
-            {/* ── 탭 콘텐츠: 참고문헌 ── */}
-            {activeSection === 'references' && hasReferences && (
-              <Paper elevation={2} sx={{ p: 4 }}>
-                <Typography variant="h5" sx={{ fontWeight: 'bold', mb: 3 }}>
-                  📚 참고 문헌
-                </Typography>
-                <ReferencesPanel citationDict={citationDict} />
-              </Paper>
-            )}
-
-            {/* ── 탭 콘텐츠: 대화 로그 ── */}
-            {activeSection === 'conversation' && hasConversationLog && (
-              <Paper elevation={2} sx={{ p: 4 }}>
-                <Typography variant="h5" sx={{ fontWeight: 'bold', mb: 1 }}>
-                  💬 연구 대화 로그
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                  STORM은 다양한 관점의 전문 페르소나가 주제를 깊이 있게 탐구한 대화를 기반으로 리포트를 생성합니다.
-                </Typography>
-                <ConversationLogViewer conversationLog={report.conversation_log} />
-              </Paper>
-            )}
-
-            {/* 하단 액션 */}
-            <Box sx={{ mt: 4, display: 'flex', gap: 2, justifyContent: 'center' }}>
-              <Button variant="contained" startIcon={<ArrowBackIcon />} onClick={onBack}>
-                새로운 리포트 생성
-              </Button>
-              <Button variant="outlined" startIcon={<DownloadIcon />} onClick={() => exportAsHtml(report, citationDict)}>
-                HTML 다운로드
-              </Button>
-            </Box>
-          </Container>
+            </Container>
+          </Box>
         </Box>
-      </Box>
+      </ErrorBoundary>
     );
   }
 

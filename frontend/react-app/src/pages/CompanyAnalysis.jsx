@@ -44,9 +44,13 @@ import {
     searchCompanies,
     fetchReportsByCompany,
     generateReport,
+    submitAnalysisRequest,
 } from '../services/apiClient';
+import { useAuth } from '../contexts/AuthContext';
+import { ROLES } from '../constants';
 
 export const CompanyAnalysis = ({ onViewReport, onViewCompanyReports }) => {
+    const { user, isAdmin } = useAuth();
     const [searchQuery, setSearchQuery] = useState('');
     const [trendingCompanies, setTrendingCompanies] = useState([]);
     const [topics, setTopics] = useState([]);
@@ -54,11 +58,21 @@ export const CompanyAnalysis = ({ onViewReport, onViewCompanyReports }) => {
     const [loading, setLoading] = useState(false);
     const [trendingLoading, setTrendingLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [requestSuccess, setRequestSuccess] = useState(false); // 구직자 분석요청 접수 성공
 
     // Search result state
     const [searchResults, setSearchResults] = useState(null); // null = not searched
     const [companyReports, setCompanyReports] = useState([]); // reports for matched company
     const [selectedCompany, setSelectedCompany] = useState(null);
+
+    /** FastAPI detail은 문자열 또는 [{msg, loc, ...}] 배열일 수 있음 → 안전하게 연소로 변환 */
+    const extractErrorMsg = (e, fallback = '요청에 실패했습니다.') => {
+        const detail = e.response?.data?.detail;
+        if (!detail) return fallback;
+        if (typeof detail === 'string') return detail;
+        if (Array.isArray(detail)) return detail.map((d) => d.msg || JSON.stringify(d)).join(', ');
+        return fallback;
+    };
 
     // ─── Data Load ──────────────────────────────────────────
     useEffect(() => {
@@ -91,6 +105,7 @@ export const CompanyAnalysis = ({ onViewReport, onViewCompanyReports }) => {
         setSearchResults(null);
         setCompanyReports([]);
         setSelectedCompany(null);
+        setRequestSuccess(false);
 
         try {
             // 1. DB에서 기업 검색
@@ -112,13 +127,13 @@ export const CompanyAnalysis = ({ onViewReport, onViewCompanyReports }) => {
                 }
             }
         } catch (e) {
-            setError(e.response?.data?.detail || '검색에 실패했습니다.');
+            setError(extractErrorMsg(e, '검색에 실패했습니다.'));
         } finally {
             setLoading(false);
         }
     }, [searchQuery]);
 
-    // ─── Start Analysis ─────────────────────────────────────
+    // ─── Start Analysis (관리자 직접 실행) ─────────────────────
     const handleStartAnalysis = useCallback(async (companyName) => {
         setLoading(true);
         setError(null);
@@ -131,11 +146,37 @@ export const CompanyAnalysis = ({ onViewReport, onViewCompanyReports }) => {
                 onViewReport(result.job_id, 'PENDING');
             }
         } catch (e) {
-            setError(e.response?.data?.detail || '분석 요청에 실패했습니다.');
+            setError(extractErrorMsg(e, '분석 요청에 실패했습니다.'));
         } finally {
             setLoading(false);
         }
     }, [topics, selectedTopic, searchQuery, onViewReport]);
+
+    // ─── Submit Analysis Request (구직자 요청) ──────────────────
+    const handleSubmitRequest = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        setRequestSuccess(false);
+
+        try {
+            const topicLabel = topics.find((t) => t.id === selectedTopic)?.label || selectedTopic;
+            await submitAnalysisRequest({
+                companyId: selectedCompany?.id ?? null,
+                companyName: selectedCompany?.company_name || searchQuery.trim(),
+                topic: topicLabel,
+            });
+            setRequestSuccess(true);
+        } catch (e) {
+            const status = e.response?.status;
+            if (status === 400) {
+                setError('이미 동일한 기업에 대한 분석 요청이 접수되어 있습니다.');
+            } else {
+                setError(extractErrorMsg(e, '분석 요청에 실패했습니다.'));
+            }
+        } finally {
+            setLoading(false);
+        }
+    }, [topics, selectedTopic, selectedCompany, searchQuery]);
 
     // ─── View Existing Report ───────────────────────────────
     const handleViewExistingReport = useCallback((report) => {
@@ -352,16 +393,39 @@ export const CompanyAnalysis = ({ onViewReport, onViewCompanyReports }) => {
                                     </Alert>
                                 )}
 
-                                <Button
-                                    variant="contained"
-                                    startIcon={loading ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : <RocketLaunchIcon />}
-                                    onClick={() => handleStartAnalysis(selectedCompany.company_name)}
-                                    disabled={loading}
-                                    fullWidth
-                                    sx={{ py: 1.2, fontWeight: 600 }}
-                                >
-                                    {hasReports ? '새 주제로 분석 시작하기' : 'AI 분석 시작하기'}
-                                </Button>
+                                {/* 관리자: 직접 분석 / 구직자: 분석 요청 (or 새 주제 분석) */}
+                                {isAdmin ? (
+                                    <Button
+                                        variant="contained"
+                                        startIcon={loading ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : <RocketLaunchIcon />}
+                                        onClick={() => handleStartAnalysis(selectedCompany.company_name)}
+                                        disabled={loading}
+                                        fullWidth
+                                        sx={{ py: 1.2, fontWeight: 600 }}
+                                    >
+                                        {hasReports ? '새 주제로 분석 시작하기 (관리자)' : 'AI 분석 시작하기 (관리자)'}
+                                    </Button>
+                                ) : requestSuccess ? (
+                                    <Alert severity="success">
+                                        분석 요청이 접수되었습니다. 관리자 승인 후 분석이 시작됩니다.
+                                    </Alert>
+                                ) : (
+                                    <>
+                                        <Button
+                                            variant="contained"
+                                            startIcon={loading ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : <RocketLaunchIcon />}
+                                            onClick={handleSubmitRequest}
+                                            disabled={loading}
+                                            fullWidth
+                                            sx={{ py: 1.2, fontWeight: 600 }}
+                                        >
+                                            {hasReports ? '새 주제로 분석 요청하기' : '분석 요청하기'}
+                                        </Button>
+                                        <Typography variant="caption" display="block" sx={{ mt: 1, color: 'text.secondary' }}>
+                                            관리자 승인 후 AI 분석이 시작됩니다.
+                                        </Typography>
+                                    </>
+                                )}
 
                                 {searchResults.length > 1 && (
                                     <Box sx={{ mt: 2 }}>
@@ -393,19 +457,46 @@ export const CompanyAnalysis = ({ onViewReport, onViewCompanyReports }) => {
                                 <Typography variant="body1" sx={{ mb: 2, color: 'text.secondary' }}>
                                     <b>"{searchQuery.trim()}"</b> 에 대한 분석 데이터가 없습니다.
                                 </Typography>
-                                <Button
-                                    variant="contained"
-                                    size="large"
-                                    startIcon={loading ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : <PlayArrowIcon />}
-                                    onClick={() => handleStartAnalysis()}
-                                    disabled={loading}
-                                    sx={{ py: 1.2, px: 4, fontWeight: 600 }}
-                                >
-                                    AI 분석 시작하기
-                                </Button>
-                                <Typography variant="caption" display="block" sx={{ mt: 1, color: 'text.secondary' }}>
-                                    STORM 엔진이 웹에서 데이터를 수집하여 심층 분석 리포트를 생성합니다.
-                                </Typography>
+
+                                {requestSuccess ? (
+                                    <Alert severity="success">
+                                        분석 요청이 접수되었습니다. 관리자 승인 후 분석이 시작됩니다.
+                                    </Alert>
+                                ) : isAdmin ? (
+                                    // 관리자: 직접 분석 시작
+                                    <>
+                                        <Button
+                                            variant="contained"
+                                            size="large"
+                                            startIcon={loading ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : <PlayArrowIcon />}
+                                            onClick={() => handleStartAnalysis()}
+                                            disabled={loading}
+                                            sx={{ py: 1.2, px: 4, fontWeight: 600 }}
+                                        >
+                                            AI 분석 시작하기 (관리자)
+                                        </Button>
+                                        <Typography variant="caption" display="block" sx={{ mt: 1, color: 'text.secondary' }}>
+                                            STORM 엔진이 웹에서 데이터를 수집하여 심층 분석 리포트를 생성합니다.
+                                        </Typography>
+                                    </>
+                                ) : (
+                                    // 구직자: 분석 요청 접수 (관리자 승인 필요)
+                                    <>
+                                        <Button
+                                            variant="contained"
+                                            size="large"
+                                            startIcon={loading ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : <PlayArrowIcon />}
+                                            onClick={handleSubmitRequest}
+                                            disabled={loading}
+                                            sx={{ py: 1.2, px: 4, fontWeight: 600 }}
+                                        >
+                                            분석 요청하기
+                                        </Button>
+                                        <Typography variant="caption" display="block" sx={{ mt: 1, color: 'text.secondary' }}>
+                                            관리자 승인 후 AI 분석이 시작됩니다.
+                                        </Typography>
+                                    </>
+                                )}
                             </Box>
                         )}
                     </Paper>
