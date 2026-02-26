@@ -369,14 +369,14 @@ class TestQueryPostprocessing:
 
     def test_post_process_no_forced_tags(self):
         """롤백 후 카테고리 태그가 강제 추가되지 않아야 한다."""
-        """쿼리 길이가 200자를 넘지 않아야 한다."""
+        """쿼리 길이가 250자를 넘지 않아야 한다."""
         from backend.src.company.engine.career_pipeline import _post_process_queries
 
-        long_query = "A" * 190
+        long_query = "A" * 220
         query_items = [{"persona": "실무 면접관", "query": long_query, "tag": "WEB"}]
         result = _post_process_queries(query_items, "삼성전자")
 
-        assert len(result[0]["query"]) <= 200
+        assert len(result[0]["query"]) <= 250
 
     def test_post_process_does_not_duplicate_company_name(self):
         """이미 기업명이 포함된 쿼리에는 중복 추가하지 않아야 한다."""
@@ -1005,3 +1005,255 @@ class TestSequentialRAG:
 
         section = {"introduction": "삼성전자는 글로벌 반도체 기업이다.", "industry": "반도체"}
         assert _is_section_starved(section) is False
+
+
+# ============================================================
+# v3.1 신규 기능 테스트: Phase 실패 격리, 독립 리포트, 체이닝 절삭, 검색 타겟팅
+# ============================================================
+class TestPhaseFailureIsolation:
+    """Phase 실패 시 파이프라인 격리 및 안전 처리 테스트"""
+
+    def test_merge_phase_results_with_none_phases(self):
+        """일부 Phase가 None이어도 병합이 정상 동작해야 한다."""
+        from backend.src.company.engine.career_pipeline import _merge_phase_results
+
+        # Phase 2만 실패
+        report = _merge_phase_results(None, None, None)
+        assert report is not None
+        assert hasattr(report, "company_overview")
+        assert hasattr(report, "corporate_culture")
+        assert hasattr(report, "swot_analysis")
+        assert hasattr(report, "interview_preparation")
+
+    def test_merge_phase_results_partial_success(self):
+        """일부 Phase만 성공해도 병합 결과에 해당 섹션 데이터가 포함되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _merge_phase_results
+        from backend.src.company.schemas.career_report import CareerAnalysisReport
+
+        # Phase 1만 성공, Phase 2, 3 실패
+        phase1 = CareerAnalysisReport.model_validate(
+            {
+                "company_overview": {
+                    "introduction": "삼성전자는 대한민국의 대표적인 전자 기업입니다.",
+                    "industry": "반도체",
+                }
+            }
+        )
+        merged = _merge_phase_results(phase1, None, None)
+        assert "삼성전자" in merged.model_dump()["company_overview"]["introduction"]
+
+
+class TestIndependentPhaseReports:
+    """독립 Phase 리포트 파일 저장 테스트"""
+
+    def test_save_independent_phase_reports(self, tmp_path):
+        """Phase별 독립 JSON 파일이 올바르게 저장되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _save_independent_phase_reports
+        from backend.src.company.schemas.career_report import CareerAnalysisReport
+
+        phase1 = CareerAnalysisReport.model_validate(
+            {"company_overview": {"introduction": "테스트 기업입니다.", "industry": "IT"}}
+        )
+
+        output_dir = str(tmp_path)
+        _save_independent_phase_reports(output_dir, phase1, None, None)
+
+        import json
+        import os
+
+        # Phase 1 파일 존재 및 내용 확인
+        p1_path = os.path.join(output_dir, "phase1_overview.json")
+        assert os.path.exists(p1_path)
+        with open(p1_path, encoding="utf-8") as f:
+            p1_data = json.load(f)
+        assert "company_overview" in p1_data
+        assert "테스트" in p1_data["company_overview"]["introduction"]
+
+        # Phase 2 파일 (실패 Phase)
+        p2_path = os.path.join(output_dir, "phase2_swot.json")
+        assert os.path.exists(p2_path)
+        with open(p2_path, encoding="utf-8") as f:
+            p2_data = json.load(f)
+        assert "error" in p2_data
+
+        # Phase 3 파일 (실패 Phase)
+        p3_path = os.path.join(output_dir, "phase3_interview.json")
+        assert os.path.exists(p3_path)
+        with open(p3_path, encoding="utf-8") as f:
+            p3_data = json.load(f)
+        assert "error" in p3_data
+
+
+class TestChainingContextTruncation:
+    """체이닝 컨텍스트 JSON-safe 절삭 테스트"""
+
+    def test_truncate_chaining_dict_preserves_json_structure(self):
+        """절삭 후에도 유효한 JSON 구조가 유지되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _truncate_chaining_dict
+
+        data = {
+            "swot_analysis": {
+                "strength": ["강점1 " * 50, "강점2 " * 50, "강점3 " * 50, "강점4 " * 50],
+                "weakness": ["약점1 " * 50, "약점2 " * 50],
+                "opportunity": ["기회1 " * 50],
+                "threat": ["위협1 " * 50],
+                "so_strategy": "전략",
+                "wt_strategy": "전략",
+            }
+        }
+
+        original_json = json.dumps(data, ensure_ascii=False, indent=2)
+        truncated = _truncate_chaining_dict(data, max_chars=1000)
+        result_json = json.dumps(truncated, ensure_ascii=False, indent=2)
+
+        # JSON 파싱이 가능해야 함
+        parsed = json.loads(result_json)
+        assert "swot_analysis" in parsed
+        # 실제 절삭이 발생하여 길이가 줄어야 함
+        assert len(result_json) < len(original_json)
+        # JSON 구조가 유효함
+        assert isinstance(parsed["swot_analysis"]["strength"], list)
+        assert isinstance(parsed["swot_analysis"]["weakness"], list)
+
+    def test_build_chaining_context_truncation(self):
+        """MAX_CHAINING_CHARS를 초과하는 리포트의 체이닝 컨텍스트가 절삭되어야 한다."""
+        from unittest.mock import patch
+
+        from backend.src.company.engine.career_pipeline import _build_chaining_context
+        from backend.src.company.schemas.career_report import CareerAnalysisReport
+
+        large_report = CareerAnalysisReport.model_validate(
+            {"company_overview": {"introduction": "매우 긴 기업 소개입니다. " * 2000, "industry": "반도체"}}
+        )
+
+        # MAX_CHAINING_CHARS를 작은 값으로 오버라이드하여 테스트
+        with patch("backend.src.company.engine.career_pipeline.MAX_CHAINING_CHARS", 500):
+            result = _build_chaining_context(large_report, "기초 팩트", ["company_overview"])
+
+        assert len(result) <= 600  # 약간의 여유 허용
+        # JSON 파싱이 가능해야 함
+        parsed = json.loads(result)
+        assert "company_overview" in parsed
+
+    def test_build_chaining_context_no_truncation_for_small(self):
+        """작은 리포트는 절삭 없이 그대로 반환되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _build_chaining_context
+        from backend.src.company.schemas.career_report import CareerAnalysisReport
+
+        small_report = CareerAnalysisReport.model_validate(
+            {"company_overview": {"introduction": "삼성전자 소개", "industry": "반도체"}}
+        )
+
+        result = _build_chaining_context(small_report, "기초 팩트", ["company_overview"])
+        parsed = json.loads(result)
+        assert parsed["company_overview"]["introduction"] == "삼성전자 소개"
+        # 절삭 마커가 없어야 함
+        assert "텍스트 절삭" not in result
+
+
+class TestSearchTargeting:
+    """검색 쿼리 PDF 차단 및 DART 사이트 타겟팅 테스트"""
+
+    def test_post_process_adds_pdf_filter(self):
+        """모든 쿼리에 -filetype:pdf가 추가되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _post_process_queries
+
+        query_items = [
+            {"persona": "산업 애널리스트", "query": "매출액 영업이익", "tag": "DART"},
+            {"persona": "수석 취업 지원관", "query": "기업문화 핵심가치", "tag": "WEB"},
+        ]
+        result = _post_process_queries(query_items, "삼성전자")
+
+        for item in result:
+            assert "-filetype:pdf" in item["query"], f"PDF 필터 누락: {item['query']}"
+
+    def test_post_process_adds_dart_site_targeting(self):
+        """[DART] 태그 쿼리에 site:dart.fss.or.kr OR site:kind.krx.co.kr가 추가되어야 한다."""
+        from backend.src.company.engine.career_pipeline import _post_process_queries
+
+        query_items = [{"persona": "산업 애널리스트", "query": "매출액 영업이익", "tag": "DART"}]
+        result = _post_process_queries(query_items, "삼성전자")
+
+        assert "site:dart.fss.or.kr" in result[0]["query"]
+        assert "site:kind.krx.co.kr" in result[0]["query"]
+
+    def test_post_process_no_dart_for_web_tag(self):
+        """[WEB] 태그 쿼리에는 DART 사이트 타겟팅이 추가되지 않아야 한다."""
+        from backend.src.company.engine.career_pipeline import _post_process_queries
+
+        query_items = [{"persona": "수석 취업 지원관", "query": "기업문화 핵심가치", "tag": "WEB"}]
+        result = _post_process_queries(query_items, "삼성전자")
+
+        assert "site:dart.fss.or.kr" not in result[0]["query"]
+
+    def test_post_process_no_duplicate_pdf_filter(self):
+        """이미 -filetype:pdf가 있는 쿼리에 중복 추가하지 않아야 한다."""
+        from backend.src.company.engine.career_pipeline import _post_process_queries
+
+        query_items = [{"persona": "산업 애널리스트", "query": "매출액 -filetype:pdf", "tag": "WEB"}]
+        result = _post_process_queries(query_items, "삼성전자")
+
+        assert result[0]["query"].count("-filetype:pdf") == 1
+
+    def test_post_process_query_length_with_filters(self):
+        """PDF 필터 + DART 타겟팅 추가 후에도 쿼리 길이가 250자를 넘지 않아야 한다."""
+        from backend.src.company.engine.career_pipeline import _post_process_queries
+
+        long_query = "A" * 200
+        query_items = [{"persona": "산업 애널리스트", "query": long_query, "tag": "DART"}]
+        result = _post_process_queries(query_items, "삼성전자")
+
+        assert len(result[0]["query"]) <= 250
+
+
+class TestQualityRulesInPrompts:
+    """품질 검수 규칙이 시스템 프롬프트에 주입되었는지 테스트"""
+
+    def test_phase1_prompt_has_quality_rules(self):
+        """Phase 1 프롬프트에 품질 검수 규칙이 포함되어야 한다."""
+        from backend.src.company.engine.personas import PHASE1_SYSTEM_PROMPT
+
+        assert "DART" in PHASE1_SYSTEM_PROMPT
+        assert "확정 실적" in PHASE1_SYSTEM_PROMPT or "직전 회계연도" in PHASE1_SYSTEM_PROMPT
+        assert "추정치" in PHASE1_SYSTEM_PROMPT or "전망치" in PHASE1_SYSTEM_PROMPT
+
+    def test_phase2_prompt_has_quality_rules(self):
+        """Phase 2 프롬프트에 품질 검수 규칙이 포함되어야 한다."""
+        from backend.src.company.engine.personas import PHASE2_SYSTEM_PROMPT
+
+        assert "확정 실적" in PHASE2_SYSTEM_PROMPT or "DART" in PHASE2_SYSTEM_PROMPT
+        assert "전망" in PHASE2_SYSTEM_PROMPT
+
+    def test_phase3_prompt_has_weakness_mapping(self):
+        """Phase 3 프롬프트에 weakness/threat 1:1 매핑 규칙이 포함되어야 한다."""
+        from backend.src.company.engine.personas import PHASE3_SYSTEM_PROMPT
+
+        assert "1:1" in PHASE3_SYSTEM_PROMPT or "매핑" in PHASE3_SYSTEM_PROMPT
+        assert "weakness" in PHASE3_SYSTEM_PROMPT
+        assert "threat" in PHASE3_SYSTEM_PROMPT
+
+    def test_phase3_prompt_has_citation_requirement(self):
+        """Phase 3 프롬프트에 데이터 인용 요구 규칙이 포함되어야 한다."""
+        from backend.src.company.engine.personas import PHASE3_SYSTEM_PROMPT
+
+        assert "인용" in PHASE3_SYSTEM_PROMPT
+        assert "배열 길이" in PHASE3_SYSTEM_PROMPT or "동일" in PHASE3_SYSTEM_PROMPT
+
+
+class TestNLIFutureProjectionDetection:
+    """NLI 평가자 프롬프트에 미래 전망치 탐지 규칙이 포함되었는지 테스트"""
+
+    def test_evaluator_prompt_has_future_projection_rules(self):
+        """평가자 시스템 프롬프트에 미래 전망치 환각 탐지 규칙이 포함되어야 한다."""
+        from backend.src.company.engine.evaluator import EVALUATOR_SYSTEM_PROMPT
+
+        assert "미래 전망치" in EVALUATOR_SYSTEM_PROMPT or "전망" in EVALUATOR_SYSTEM_PROMPT
+        assert "추정" in EVALUATOR_SYSTEM_PROMPT
+        assert "확정 실적" in EVALUATOR_SYSTEM_PROMPT or "직전 회계연도" in EVALUATOR_SYSTEM_PROMPT
+
+    def test_evaluator_prompt_has_rewrite_instruction_for_projections(self):
+        """미래 전망치 문장에 대해 rewrite 지시를 요구하는 규칙이 있어야 한다."""
+        from backend.src.company.engine.evaluator import EVALUATOR_SYSTEM_PROMPT
+
+        assert "rewrite" in EVALUATOR_SYSTEM_PROMPT
+        assert "교체" in EVALUATOR_SYSTEM_PROMPT or "교정" in EVALUATOR_SYSTEM_PROMPT

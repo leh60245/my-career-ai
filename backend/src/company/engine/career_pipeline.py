@@ -55,6 +55,8 @@ MAX_LLM_RETRIES = 2
 MAX_VERIFICATION_LOOPS = 2
 # LLM 입력 컨텍스트 최대 글자 수 (토큰 초과 방어)
 MAX_CONTEXT_CHARS = 50_000
+# 체이닝 컨텍스트 최대 글자 수 (이전 Phase 결과 주입 시 LLM 토큰 초과 방어)
+MAX_CHAINING_CHARS = 30_000
 
 
 async def run_career_pipeline(
@@ -135,66 +137,79 @@ async def run_career_pipeline(
         phase_truncation_infos: dict[str, dict[str, Any]] = {}
         search_results_by_persona: dict[str, list[dict]] = {}
 
+        # Phase 실패 상태 추적
+        phase_status: dict[str, str] = {"phase_1": "not_started", "phase_2": "not_started", "phase_3": "not_started"}
+
         # --- Phase 3A: 기초 팩트 (company_overview) ---
-        phase1_report, ctx1, trunc1, vlog1, results1 = await _run_single_phase(
-            phase_num=1,
-            phase_name="기초 팩트",
-            system_prompt=PHASE1_SYSTEM_PROMPT,
-            processed_queries=processed_queries,
-            rm=rm,
-            target_personas=PHASE_PERSONA_MAP[1],
-            company_name=company_name,
-            topic=topic,
-            model_provider=model_provider,
-            job_id=job_id,
-            jobs_dict=jobs_dict,
-            chaining_context=None,
-            progress_range=(15, 35),
-        )
-        all_search_results.extend(results1)
-        phase_logs["phase_1"] = vlog1
-        phase_context_texts["phase_1"] = ctx1
-        phase_truncation_infos["phase_1"] = trunc1
-        for pq in processed_queries:
-            if pq["persona"] in {p.name for p in PHASE_PERSONA_MAP[1]}:
-                persona_name = pq["persona"]
-                if persona_name not in search_results_by_persona:
-                    search_results_by_persona[persona_name] = []
-        # Phase 1 검색 결과를 persona별로 기록
-        for r in results1:
-            for p in PHASE_PERSONA_MAP[1]:
-                if p.name not in search_results_by_persona:
-                    search_results_by_persona[p.name] = []
-                search_results_by_persona[p.name].append(r)
+        phase1_report = None
+        try:
+            phase1_report, ctx1, trunc1, vlog1, results1 = await _run_single_phase(
+                phase_num=1,
+                phase_name="기초 팩트",
+                system_prompt=PHASE1_SYSTEM_PROMPT,
+                processed_queries=processed_queries,
+                rm=rm,
+                target_personas=PHASE_PERSONA_MAP[1],
+                company_name=company_name,
+                topic=topic,
+                model_provider=model_provider,
+                job_id=job_id,
+                jobs_dict=jobs_dict,
+                chaining_context=None,
+                progress_range=(15, 35),
+            )
+            all_search_results.extend(results1)
+            phase_logs["phase_1"] = vlog1
+            phase_context_texts["phase_1"] = ctx1
+            phase_truncation_infos["phase_1"] = trunc1
+            for r in results1:
+                for p in PHASE_PERSONA_MAP[1]:
+                    if p.name not in search_results_by_persona:
+                        search_results_by_persona[p.name] = []
+                    search_results_by_persona[p.name].append(r)
+            phase_status["phase_1"] = "completed"
+        except Exception as phase1_err:
+            logger.error(f"[{job_id}] Phase 1 (기초 팩트) 실패 - 후속 Phase 계속 진행: {phase1_err}")
+            phase_status["phase_1"] = f"failed: {phase1_err}"
+            phase_logs["phase_1"] = {"error": str(phase1_err)}
+            jobs_dict[job_id]["progress"] = 35
 
         # --- Phase 3B: 체이닝 컨텍스트 구성 (Phase 1 → Phase 2) ---
         chaining_ctx_1 = _build_chaining_context(phase1_report, "기초 팩트", ["company_overview"])
 
         # --- Phase 3C: 심층 분석 (corporate_culture + swot_analysis) ---
-        phase2_report, ctx2, trunc2, vlog2, results2 = await _run_single_phase(
-            phase_num=2,
-            phase_name="심층 분석",
-            system_prompt=PHASE2_SYSTEM_PROMPT,
-            processed_queries=processed_queries,
-            rm=rm,
-            target_personas=PHASE_PERSONA_MAP[2],
-            company_name=company_name,
-            topic=topic,
-            model_provider=model_provider,
-            job_id=job_id,
-            jobs_dict=jobs_dict,
-            chaining_context=chaining_ctx_1,
-            progress_range=(35, 60),
-        )
-        all_search_results.extend(results2)
-        phase_logs["phase_2"] = vlog2
-        phase_context_texts["phase_2"] = ctx2
-        phase_truncation_infos["phase_2"] = trunc2
-        for r in results2:
-            for p in PHASE_PERSONA_MAP[2]:
-                if p.name not in search_results_by_persona:
-                    search_results_by_persona[p.name] = []
-                search_results_by_persona[p.name].append(r)
+        phase2_report = None
+        try:
+            phase2_report, ctx2, trunc2, vlog2, results2 = await _run_single_phase(
+                phase_num=2,
+                phase_name="심층 분석",
+                system_prompt=PHASE2_SYSTEM_PROMPT,
+                processed_queries=processed_queries,
+                rm=rm,
+                target_personas=PHASE_PERSONA_MAP[2],
+                company_name=company_name,
+                topic=topic,
+                model_provider=model_provider,
+                job_id=job_id,
+                jobs_dict=jobs_dict,
+                chaining_context=chaining_ctx_1,
+                progress_range=(35, 60),
+            )
+            all_search_results.extend(results2)
+            phase_logs["phase_2"] = vlog2
+            phase_context_texts["phase_2"] = ctx2
+            phase_truncation_infos["phase_2"] = trunc2
+            for r in results2:
+                for p in PHASE_PERSONA_MAP[2]:
+                    if p.name not in search_results_by_persona:
+                        search_results_by_persona[p.name] = []
+                    search_results_by_persona[p.name].append(r)
+            phase_status["phase_2"] = "completed"
+        except Exception as phase2_err:
+            logger.error(f"[{job_id}] Phase 2 (심층 분석) 실패 - 후속 Phase 계속 진행: {phase2_err}")
+            phase_status["phase_2"] = f"failed: {phase2_err}"
+            phase_logs["phase_2"] = {"error": str(phase2_err)}
+            jobs_dict[job_id]["progress"] = 60
 
         # --- Phase 3D: 체이닝 컨텍스트 구성 (Phase 1+2 → Phase 3) ---
         chaining_ctx_2 = _build_chaining_context(phase2_report, "심층 분석", ["corporate_culture", "swot_analysis"])
@@ -202,30 +217,38 @@ async def run_career_pipeline(
         combined_chaining = chaining_ctx_1 + "\n\n" + chaining_ctx_2
 
         # --- Phase 3E: 면접 파생 (interview_preparation) ---
-        phase3_report, ctx3, trunc3, vlog3, results3 = await _run_single_phase(
-            phase_num=3,
-            phase_name="면접 파생",
-            system_prompt=PHASE3_SYSTEM_PROMPT,
-            processed_queries=processed_queries,
-            rm=rm,
-            target_personas=PHASE_PERSONA_MAP[3],
-            company_name=company_name,
-            topic=topic,
-            model_provider=model_provider,
-            job_id=job_id,
-            jobs_dict=jobs_dict,
-            chaining_context=combined_chaining,
-            progress_range=(60, 80),
-        )
-        all_search_results.extend(results3)
-        phase_logs["phase_3"] = vlog3
-        phase_context_texts["phase_3"] = ctx3
-        phase_truncation_infos["phase_3"] = trunc3
-        for r in results3:
-            for p in PHASE_PERSONA_MAP[3]:
-                if p.name not in search_results_by_persona:
-                    search_results_by_persona[p.name] = []
-                search_results_by_persona[p.name].append(r)
+        phase3_report = None
+        try:
+            phase3_report, ctx3, trunc3, vlog3, results3 = await _run_single_phase(
+                phase_num=3,
+                phase_name="면접 파생",
+                system_prompt=PHASE3_SYSTEM_PROMPT,
+                processed_queries=processed_queries,
+                rm=rm,
+                target_personas=PHASE_PERSONA_MAP[3],
+                company_name=company_name,
+                topic=topic,
+                model_provider=model_provider,
+                job_id=job_id,
+                jobs_dict=jobs_dict,
+                chaining_context=combined_chaining,
+                progress_range=(60, 80),
+            )
+            all_search_results.extend(results3)
+            phase_logs["phase_3"] = vlog3
+            phase_context_texts["phase_3"] = ctx3
+            phase_truncation_infos["phase_3"] = trunc3
+            for r in results3:
+                for p in PHASE_PERSONA_MAP[3]:
+                    if p.name not in search_results_by_persona:
+                        search_results_by_persona[p.name] = []
+                    search_results_by_persona[p.name].append(r)
+            phase_status["phase_3"] = "completed"
+        except Exception as phase3_err:
+            logger.error(f"[{job_id}] Phase 3 (면접 파생) 실패: {phase3_err}")
+            phase_status["phase_3"] = f"failed: {phase3_err}"
+            phase_logs["phase_3"] = {"error": str(phase3_err)}
+            jobs_dict[job_id]["progress"] = 80
 
         # ================================================================
         # Phase 4: 결과 병합
@@ -251,23 +274,41 @@ async def run_career_pipeline(
         base_output_dir = "results"
         output_dir = create_run_directory(base_output_dir, company_id, company_name, job_id)
 
+        # ================================================================
+        # Phase 4.5: 독립 Phase 리포트 파일 저장
+        # ================================================================
+        _save_independent_phase_reports(output_dir, phase1_report, phase2_report, phase3_report)
+
         # 메타데이터 기록
         write_run_metadata(
             output_dir,
             {
                 "job_id": job_id,
                 "topic": topic,
-                "pipeline": "career_pipeline_v3.0",
-                "architecture": "3-phase-sequential-rag-with-refinement",
+                "pipeline": "career_pipeline_v3.1",
+                "architecture": "3-phase-sequential-rag-independent-reports",
                 "personas": [p.name for p in ALL_PERSONAS],
                 "total_queries": len(processed_queries),
                 "total_search_results": len(all_search_results),
                 "model_provider": model_provider,
                 "verification_loops": verification_log.get("total_loops", 0),
+                "phase_status": phase_status,
                 "phases": {
-                    "phase_1": {"name": "기초 팩트", "sections": ["company_overview"]},
-                    "phase_2": {"name": "심층 분석", "sections": ["corporate_culture", "swot_analysis"]},
-                    "phase_3": {"name": "면접 파생", "sections": ["interview_preparation"]},
+                    "phase_1": {
+                        "name": "기초 팩트",
+                        "sections": ["company_overview"],
+                        "status": phase_status["phase_1"],
+                    },
+                    "phase_2": {
+                        "name": "심층 분석",
+                        "sections": ["corporate_culture", "swot_analysis"],
+                        "status": phase_status["phase_2"],
+                    },
+                    "phase_3": {
+                        "name": "면접 파생",
+                        "sections": ["interview_preparation"],
+                        "status": phase_status["phase_3"],
+                    },
                 },
             },
         )
@@ -394,18 +435,18 @@ async def run_career_pipeline(
 
 def _post_process_queries(query_items: list[dict[str, str]], company_name: str) -> list[dict[str, str]]:
     """
-    쿼리 후처리: 기업명 prefix 추가 및 길이 제한만 수행합니다.
-
-    카테고리 태그(재무, 인재상 등) 강제 병합 로직은 제거되었습니다.
-    시스템 프롬프트에 정의된 원본 쿼리 문자열만 온전히 전달합니다.
+    쿼리 후처리: 기업명 prefix, PDF 차단, DART/KIND 사이트 타겟팅, 길이 제한을 수행합니다.
 
     Args:
         query_items: build_query_queue의 결과
         company_name: 기업명
 
     Returns:
-        기업명이 보강된 쿼리 리스트
+        후처리된 쿼리 리스트
     """
+    # DART 태그 쿼리에 사이트 타겟팅을 추가할 대상 키워드
+    DART_SITE_TARGETING = "site:dart.fss.or.kr OR site:kind.krx.co.kr"
+
     processed = []
     for item in query_items:
         query = item["query"]
@@ -416,8 +457,16 @@ def _post_process_queries(query_items: list[dict[str, str]], company_name: str) 
         if company_name not in query:
             query = f"{company_name} {query}"
 
+        # PDF 파일 타입 차단
+        if "-filetype:pdf" not in query:
+            query = f"{query} -filetype:pdf"
+
+        # [DART] 태그 쿼리에 DART/KIND 사이트 타겟팅 추가
+        if tag == "DART" and DART_SITE_TARGETING not in query:
+            query = f"{query} {DART_SITE_TARGETING}"
+
         # 길이 제한
-        query = query[:200].strip()
+        query = query[:250].strip()
 
         processed.append({"persona": persona, "query": query, "tag": tag})
 
@@ -878,6 +927,38 @@ def _write_context_trace(
 CONTEXT_STARVATION_MSG = "이전 분석 단계에서 데이터 부족으로 검증된 데이터가 충분하지 않습니다. 본 단계에서는 검색 결과만을 기반으로 분석을 수행하십시오."
 
 
+def _save_independent_phase_reports(
+    output_dir: str, phase1_report: Any | None, phase2_report: Any | None, phase3_report: Any | None
+) -> None:
+    """
+    각 Phase의 독립 리포트를 개별 JSON 파일로 저장합니다.
+
+    Args:
+        output_dir: 결과 저장 디렉토리
+        phase1_report: Phase 1 결과 (company_overview)
+        phase2_report: Phase 2 결과 (corporate_culture, swot_analysis)
+        phase3_report: Phase 3 결과 (interview_preparation)
+    """
+    phase_files = [
+        ("phase1_overview.json", phase1_report, ["company_overview"]),
+        ("phase2_swot.json", phase2_report, ["corporate_culture", "swot_analysis"]),
+        ("phase3_interview.json", phase3_report, ["interview_preparation"]),
+    ]
+    for filename, report, section_keys in phase_files:
+        path = os.path.join(output_dir, filename)
+        try:
+            if report is not None:
+                report_dict = report.model_dump()
+                phase_data = {k: report_dict.get(k, {}) for k in section_keys}
+            else:
+                phase_data = {"error": "Phase 실행 실패 - 해당 섹션 데이터 없음"}
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(phase_data, f, ensure_ascii=False, indent=2)
+            logger.info(f"독립 Phase 리포트 저장: {path}")
+        except Exception as e:
+            logger.warning(f"독립 Phase 리포트 저장 실패 ({filename}): {e}")
+
+
 def _is_section_starved(section_dict: dict[str, Any]) -> bool:
     """
     섹션의 모든 필드가 기본값('정보 부족')인지 판별합니다.
@@ -908,6 +989,8 @@ def _build_chaining_context(report: Any | None, phase_name: str, section_keys: l
 
     Context Starvation 방어: 검증 후 해당 섹션의 모든 필드가 기본값이면
     starvation 메시지를 반환합니다.
+    JSON-safe 절삭: MAX_CHAINING_CHARS 초과 시 배열 항목을 뒤에서부터 제거하여
+    JSON 구조를 보존하면서 안전하게 절삭합니다.
 
     Args:
         report: CareerAnalysisReport 객체 (None 허용, Null Safe)
@@ -934,11 +1017,95 @@ def _build_chaining_context(report: Any | None, phase_name: str, section_keys: l
         if all_starved:
             return f"[{phase_name}] {CONTEXT_STARVATION_MSG}"
 
-        return json.dumps(result, ensure_ascii=False, indent=2)
+        json_str = json.dumps(result, ensure_ascii=False, indent=2)
+
+        # JSON-safe 절삭: 구조를 보존하면서 배열 항목을 뒤에서부터 제거
+        if len(json_str) > MAX_CHAINING_CHARS:
+            original_length = len(json_str)
+            result = _truncate_chaining_dict(result, MAX_CHAINING_CHARS)
+            json_str = json.dumps(result, ensure_ascii=False, indent=2)
+            logger.warning(
+                f"체이닝 컨텍스트 절삭 ({phase_name}): {original_length} -> {len(json_str)} 글자 "
+                f"(한도: {MAX_CHAINING_CHARS})"
+            )
+
+        return json_str
 
     except Exception as e:
         logger.warning(f"Chaining context 생성 실패 ({phase_name}): {e}")
         return f"[{phase_name}] {CONTEXT_STARVATION_MSG}"
+
+
+def _truncate_chaining_dict(data: dict[str, Any], max_chars: int) -> dict[str, Any]:
+    """
+    JSON 구조를 보존하면서 안전하게 절삭합니다.
+
+    1단계: 배열 필드의 마지막 항목부터 순차 제거
+    2단계: 배열 절삭으로 부족하면 긴 문자열 필드를 뒤에서부터 절삭
+
+    Args:
+        data: 절삭 대상 딕셔너리
+        max_chars: 최대 글자 수
+
+    Returns:
+        절삭된 딕셔너리 (원본 변경 없음)
+    """
+    import copy
+
+    truncated = copy.deepcopy(data)
+
+    # 1단계: 배열 필드를 수집하여 길이 내림차순으로 항목 제거
+    for _ in range(100):  # 무한루프 방어
+        current_json = json.dumps(truncated, ensure_ascii=False, indent=2)
+        if len(current_json) <= max_chars:
+            return truncated
+
+        # 현재 가장 긴 배열 탐색
+        longest_arr_key = None
+        longest_len = 0
+        for section_key, section_data in truncated.items():
+            if isinstance(section_data, dict):
+                for field_key, field_value in section_data.items():
+                    if isinstance(field_value, list) and len(field_value) > 1:
+                        arr_len = len(json.dumps(field_value, ensure_ascii=False))
+                        if arr_len > longest_len:
+                            longest_len = arr_len
+                            longest_arr_key = (section_key, field_key)
+
+        if longest_arr_key is None:
+            break  # 더 이상 줄일 배열이 없음 -> 2단계로
+
+        sk, fk = longest_arr_key
+        truncated[sk][fk].pop()
+        if not any(isinstance(item, str) and "텍스트 절삭" in item for item in truncated[sk][fk]):
+            truncated[sk][fk].append("[... 텍스트 절삭: 체이닝 컨텍스트 길이 초과 ...]")
+
+    # 2단계: 긴 문자열 필드를 뒤에서부터 절삭
+    for _ in range(100):
+        current_json = json.dumps(truncated, ensure_ascii=False, indent=2)
+        if len(current_json) <= max_chars:
+            return truncated
+
+        # 가장 긴 문자열 필드 탐색
+        longest_str_key = None
+        longest_str_len = 0
+        for section_key, section_data in truncated.items():
+            if isinstance(section_data, dict):
+                for field_key, field_value in section_data.items():
+                    if isinstance(field_value, str) and len(field_value) > 100:
+                        if len(field_value) > longest_str_len:
+                            longest_str_len = len(field_value)
+                            longest_str_key = (section_key, field_key)
+
+        if longest_str_key is None:
+            break  # 더 이상 줄일 필드 없음
+
+        sk, fk = longest_str_key
+        # 문자열을 반으로 줄이고 절삭 마커 추가
+        target_len = min(longest_str_len // 2, max_chars // 2)
+        truncated[sk][fk] = truncated[sk][fk][:target_len] + " [... 텍스트 절삭 ...]"
+
+    return truncated
 
 
 def _merge_phase_results(phase1_report: Any | None, phase2_report: Any | None, phase3_report: Any | None) -> Any:
