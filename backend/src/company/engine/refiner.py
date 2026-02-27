@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from backend.src.common.config import AI_CONFIG
 from backend.src.company.engine.evaluator import EvaluationResult, HallucinationFinding
+from backend.src.company.engine.llm_resilience import LLMResilienceState, resilient_llm_call
 
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,7 @@ async def refine_report(
     source_context: str,
     company_name: str,
     model_provider: str = "openai",
+    resilience_state: LLMResilienceState | None = None,
 ) -> RefinementResult:
     """
     Evaluator의 지적을 기반으로 JSON 초안을 교정합니다.
@@ -115,14 +117,11 @@ async def refine_report(
         source_context: 원천 검색 데이터 컨텍스트
         company_name: 분석 대상 기업명
         model_provider: LLM 프로바이더 ('openai' 또는 'gemini')
+        resilience_state: LLM Resilience 상태 (None이면 내부 생성)
 
     Returns:
         RefinementResult: 교정 결과
     """
-    import asyncio
-
-    import litellm
-
     user_prompt = _build_refinement_prompt(draft_json, evaluation, source_context, company_name)
 
     if model_provider == "gemini":
@@ -137,22 +136,18 @@ async def refine_report(
 
     messages = [{"role": "system", "content": REFINER_SYSTEM_PROMPT}, {"role": "user", "content": user_prompt}]
 
-    loop = asyncio.get_running_loop()
-    response = await loop.run_in_executor(
-        None,
-        lambda: litellm.completion(
-            model=model,
-            messages=messages,
-            api_key=api_key,
-            temperature=0.1,
-            max_tokens=8000,
-            response_format={"type": "json_object"},
-        ),
+    content = await resilient_llm_call(
+        model=model,
+        messages=messages,
+        api_key=api_key,
+        state=resilience_state,
+        temperature=0.1,
+        max_tokens=8000,
+        response_format={"type": "json_object"},
     )
 
-    content = response.choices[0].message.content  # type: ignore[union-attr]
     if content is None:
-        raise ValueError("Refiner LLM이 빈 응답을 반환했습니다.")
+        raise ValueError("Refiner LLM이 빈 응답을 반환했습니다 (모든 재시도 실패).")
 
     return _parse_refinement_result(content, evaluation)
 

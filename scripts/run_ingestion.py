@@ -14,6 +14,7 @@ from backend.src.company.services.analysis_service import AnalysisService
 from backend.src.company.services.company_service import CompanyService
 from backend.src.company.services.dart_service import DartService
 from backend.src.company.services.ingestion_service import IngestionService
+from backend.src.user import models as user_models  # noqa: F401
 
 
 # 프로젝트 루트 경로 설정

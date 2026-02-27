@@ -1,15 +1,3 @@
-"""
-Backend STORM Service (Job Manager)
-
-역할:
-    - 메모리 기반 JOBS dict로 실시간 진행률 관리
-    - src.company.engine.storm_pipeline에 실행을 위임
-    - 프론트엔드 polling용 상태 조회 API 제공
-
-핵심: 직접 분석하지 않습니다. 분석은 Engine이, DB는 Pipeline이 처리합니다.
-      이 모듈은 "관리"만 합니다.
-"""
-
 import logging
 from typing import Any
 

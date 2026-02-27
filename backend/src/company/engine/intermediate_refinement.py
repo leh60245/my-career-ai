@@ -19,10 +19,12 @@ import logging
 from datetime import date
 from typing import Any
 
+from backend.src.company.engine.llm_resilience import LLMResilienceState, resilient_llm_call
+
 
 logger = logging.getLogger(__name__)
 
-# 동시성 제어 상수
+# 동시성 제어 상수 (글로벌 세마포어로 통합됨, 호환성을 위해 유지)
 MAX_CONCURRENT_LLM_CALLS = 5
 LLM_RETRY_COUNT = 2
 LLM_RETRY_DELAY_SEC = 1.0
@@ -61,7 +63,11 @@ _ANSWER_QUESTION_SYSTEM_PROMPT = (
 
 
 async def expand_queries(
-    question: str, company_name: str, model_provider: str = "openai", max_queries: int = 5
+    question: str,
+    company_name: str,
+    model_provider: str = "openai",
+    max_queries: int = 5,
+    resilience_state: LLMResilienceState | None = None,
 ) -> list[str]:
     """
     단일 질문을 다각화된 검색 쿼리 배열로 확장합니다.
@@ -71,12 +77,11 @@ async def expand_queries(
         company_name: 분석 대상 기업명
         model_provider: LLM 프로바이더 ('openai' 또는 'gemini')
         max_queries: 생성할 최대 쿼리 수
+        resilience_state: LLM Resilience 상태 (None이면 내부 생성)
 
     Returns:
         확장된 검색 쿼리 리스트 (실패 시 원본 질문만 포함)
     """
-    import litellm
-
     from backend.src.common.config import AI_CONFIG
 
     current_year = str(date.today().year)
@@ -104,56 +109,49 @@ async def expand_queries(
         logger.warning(f"API key 미설정. 원본 쿼리 반환: {question}")
         return [question]
 
-    for attempt in range(1, LLM_RETRY_COUNT + 1):
-        try:
-            loop = asyncio.get_running_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: litellm.completion(
-                    model=model,
-                    messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-                    api_key=api_key,
-                    temperature=0.5,
-                    max_tokens=500,
-                    response_format={"type": "json_object"},
-                ),
-            )
+    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
 
-            content = response.choices[0].message.content  # type: ignore[union-attr]
-            if not content:
-                logger.warning(f"QuestionToQuery 빈 응답 (시도 {attempt})")
-                continue
+    content = await resilient_llm_call(
+        model=model,
+        messages=messages,
+        api_key=api_key,
+        state=resilience_state,
+        temperature=0.5,
+        max_tokens=500,
+        response_format={"type": "json_object"},
+        max_retries=LLM_RETRY_COUNT,
+    )
 
-            parsed = json.loads(content)
-            queries = parsed.get("queries", [])
+    if content is None:
+        logger.warning(f"QuestionToQuery 전 시도 실패. 원본 쿼리 반환: {question}")
+        return [question]
 
-            if not queries:
-                logger.warning(f"QuestionToQuery 빈 쿼리 배열 (시도 {attempt})")
-                continue
+    try:
+        parsed = json.loads(content)
+        queries = parsed.get("queries", [])
 
-            # 기업명이 없는 쿼리에 기업명 추가
-            result = []
-            for q in queries[:max_queries]:
-                q = str(q).strip()
-                if q and company_name not in q:
-                    q = f"{company_name} {q}"
-                if q:
-                    result.append(q[:200])
+        if not queries:
+            logger.warning(f"QuestionToQuery 빈 쿼리 배열. 원본 쿼리 반환: {question}")
+            return [question]
 
-            if result:
-                logger.info(f"QuestionToQuery 성공: '{question}' -> {len(result)}개 쿼리")
-                return result
+        # 기업명이 없는 쿼리에 기업명 추가
+        result = []
+        for q in queries[:max_queries]:
+            q = str(q).strip()
+            if q and company_name not in q:
+                q = f"{company_name} {q}"
+            if q:
+                result.append(q[:200])
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"QuestionToQuery JSON 파싱 실패 (시도 {attempt}): {e}")
-        except Exception as e:
-            logger.warning(f"QuestionToQuery LLM 호출 실패 (시도 {attempt}): {e}")
+        if result:
+            logger.info(f"QuestionToQuery 성공: '{question}' -> {len(result)}개 쿼리")
+            return result
 
-        if attempt < LLM_RETRY_COUNT:
-            await asyncio.sleep(LLM_RETRY_DELAY_SEC)
+    except json.JSONDecodeError as e:
+        logger.warning(f"QuestionToQuery JSON 파싱 실패: {e}")
 
     # Fallback: 원본 질문 반환
-    logger.warning(f"QuestionToQuery 全시도 실패. 원본 쿼리 반환: {question}")
+    logger.warning(f"QuestionToQuery 실패. 원본 쿼리 반환: {question}")
     return [question]
 
 
@@ -163,6 +161,7 @@ async def extract_answer(
     company_name: str,
     model_provider: str = "openai",
     semaphore: asyncio.Semaphore | None = None,
+    resilience_state: LLMResilienceState | None = None,
 ) -> str:
     """
     검색 결과 스니펫에서 질문에 대한 핵심 답변을 추출/압축합니다.
@@ -172,13 +171,12 @@ async def extract_answer(
         snippets: 검색 결과 스니펫 리스트
         company_name: 분석 대상 기업명
         model_provider: LLM 프로바이더
-        semaphore: 동시성 제어용 세마포어 (Rate Limit 방어)
+        semaphore: 동시성 제어용 세마포어 (Rate Limit 방어, None이면 글로벌 세마포어 사용)
+        resilience_state: LLM Resilience 상태 (None이면 내부 생성)
 
     Returns:
         추출된 핵심 답변 문자열 (실패 또는 정보 없음 시 빈 문자열)
     """
-    import litellm
-
     from backend.src.common.config import AI_CONFIG
 
     # Context Starvation 방어: 스니펫 없으면 빈 문자열 반환
@@ -208,45 +206,32 @@ async def extract_answer(
         logger.warning("API key 미설정. 원시 스니펫 반환")
         return snippets_text[:500]
 
+    messages = [{"role": "system", "content": _ANSWER_QUESTION_SYSTEM_PROMPT}, {"role": "user", "content": user_prompt}]
+
     async def _call() -> str:
-        for attempt in range(1, LLM_RETRY_COUNT + 1):
-            try:
-                loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: litellm.completion(
-                        model=model,
-                        messages=[
-                            {"role": "system", "content": _ANSWER_QUESTION_SYSTEM_PROMPT},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        api_key=api_key,
-                        temperature=0.1,
-                        max_tokens=500,
-                        response_format={"type": "json_object"},
-                    ),
-                )
+        content = await resilient_llm_call(
+            model=model,
+            messages=messages,
+            api_key=api_key,
+            state=resilience_state,
+            temperature=0.1,
+            max_tokens=500,
+            response_format={"type": "json_object"},
+            max_retries=LLM_RETRY_COUNT,
+        )
 
-                content = response.choices[0].message.content  # type: ignore[union-attr]
-                if not content:
-                    logger.warning(f"AnswerQuestion 빈 응답 (시도 {attempt})")
-                    continue
+        if content is None:
+            logger.warning(f"AnswerQuestion 전 시도 실패. 빈 답변 반환. 질문: {question}")
+            return ""
 
-                parsed = json.loads(content)
-                answer = parsed.get("answer", "")
-                if answer:
-                    return str(answer).strip()
+        try:
+            parsed = json.loads(content)
+            answer = parsed.get("answer", "")
+            if answer:
+                return str(answer).strip()
+        except json.JSONDecodeError as e:
+            logger.warning(f"AnswerQuestion JSON 파싱 실패: {e}")
 
-            except json.JSONDecodeError as e:
-                logger.warning(f"AnswerQuestion JSON 파싱 실패 (시도 {attempt}): {e}")
-            except Exception as e:
-                logger.warning(f"AnswerQuestion LLM 호출 실패 (시도 {attempt}): {e}")
-
-            if attempt < LLM_RETRY_COUNT:
-                await asyncio.sleep(LLM_RETRY_DELAY_SEC)
-
-        # Fallback: 빈 문자열 반환 (파이프라인 크래시 방지)
-        logger.warning(f"AnswerQuestion 全시도 실패. 빈 답변 반환. 질문: {question}")
         return ""
 
     if semaphore:

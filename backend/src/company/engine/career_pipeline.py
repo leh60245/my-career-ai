@@ -1,19 +1,3 @@
-"""
-Career AI Pipeline (하드코딩 페르소나 기반 기업 분석 파이프라인)
-
-역할:
-    - 기존 STORMWikiRunner의 동적 파이프라인(gen_perspectives, direct_gen_outline, refine_outline)을
-      완전히 우회(Bypass)합니다.
-    - 3가지 고정 페르소나의 하드코딩 쿼리 큐를 사용하여 검색을 수행합니다.
-    - 검색 결과를 종합하여 LLM에게 순수 JSON 형태의 구조화된 보고서를 생성하도록 요청합니다.
-    - Pydantic 스키마 검증 + JSON 파싱 방어 로직 + 재시도(Retry) 로직을 적용합니다.
-
-Happy Path:
-    1. 고정 페르소나 쿼리 큐 로드 → 2. 쿼리 후처리(기업명 prefix) →
-    3. HybridRM 검색 → 4. LLM JSON 생성 → 5. 파싱/검증 → 6. DB 적재 (COMPLETED)
-    + 중간 컨텍스트 추적(context_trace.json) 및 출처 포맷팅(url_to_unified_index)
-"""
-
 import asyncio
 import json
 import logging
@@ -29,17 +13,18 @@ from backend.src.company.engine.evaluator import evaluate_report
 from backend.src.company.engine.ingestion import schedule_ingestion
 from backend.src.company.engine.intermediate_refinement import expand_queries, refine_search_results
 from backend.src.company.engine.json_utils import build_retry_prompt, safe_parse_career_report
+from backend.src.company.engine.llm_resilience import LLMResilienceState, resilient_llm_call
 from backend.src.company.engine.personas import (
     ALL_PERSONAS,
     FINAL_SYNTHESIS_PROMPT,
     PHASE1_SYSTEM_PROMPT,
-    PHASE2_SYSTEM_PROMPT,
     PHASE3_SYSTEM_PROMPT,
     PHASE_PERSONA_MAP,
     Persona,
     build_query_queue,
 )
 from backend.src.company.engine.refiner import force_delete_hallucinations, refine_report
+from backend.src.company.engine.swot_agents import run_phase2_micro_agents
 from backend.src.company.repositories.company_repository import CompanyRepository
 from backend.src.company.repositories.report_job_repository import ReportJobRepository
 from backend.src.company.services.report_job_service import ReportJobService
@@ -85,6 +70,9 @@ async def run_career_pipeline(
 
     db_engine = AsyncDatabaseEngine()
     rm = None
+
+    # 파이프라인 세션 단위 Resilience 상태 생성
+    resilience_state = LLMResilienceState()
 
     # ================================================================
     # Phase 1: 초기화 및 DB 상태 업데이트
@@ -177,36 +165,94 @@ async def run_career_pipeline(
         # --- Phase 3B: 체이닝 컨텍스트 구성 (Phase 1 → Phase 2) ---
         chaining_ctx_1 = _build_chaining_context(phase1_report, "기초 팩트", ["company_overview"])
 
-        # --- Phase 3C: 심층 분석 (corporate_culture + swot_analysis) ---
+        # --- Phase 3C: 심층 분석 — 마이크로 에이전트 5병렬 실행 (v4.0) ---
         phase2_report = None
+        phase2_agent_log: dict[str, Any] = {}
+        phase2_lossless: dict[str, Any] = {}
         try:
-            phase2_report, ctx2, trunc2, vlog2, results2 = await _run_single_phase(
-                phase_num=2,
-                phase_name="심층 분석",
-                system_prompt=PHASE2_SYSTEM_PROMPT,
-                processed_queries=processed_queries,
-                rm=rm,
-                target_personas=PHASE_PERSONA_MAP[2],
+            # Phase 2 전용 검색 실행 (기존과 동일한 쿼리 확장 + HybridRM 검색 + 중간 정제)
+            phase2_personas = PHASE_PERSONA_MAP[2]
+            phase2_persona_names = {p.name for p in phase2_personas}
+            phase2_queries = [pq for pq in processed_queries if pq["persona"] in phase2_persona_names]
+
+            # 쿼리 확장
+            phase2_expanded: list[dict[str, str]] = []
+            for pq in phase2_queries:
+                try:
+                    sub_qs = await expand_queries(pq["query"], company_name, model_provider)
+                    for sq in sub_qs:
+                        phase2_expanded.append({"persona": pq["persona"], "query": sq, "tag": pq["tag"]})
+                except Exception:
+                    phase2_expanded.append(pq)
+
+            # HybridRM 검색
+            p2_search_by_query: dict[str, list[dict]] = {}
+            p2_search_results: list[dict] = []
+            loop = asyncio.get_running_loop()
+            for pq in phase2_expanded:
+                try:
+                    results = await loop.run_in_executor(None, lambda q=pq["query"]: rm.forward(q, exclude_urls=[]))
+                    if results:
+                        p2_search_by_query.setdefault(pq["query"], []).extend(results)
+                        p2_search_results.extend(results)
+                except Exception:
+                    pass
+
+            schedule_ingestion(p2_search_results, company_name, job_id)
+            all_search_results.extend(p2_search_results)
+
+            # 중간 정제 (Map-Reduce)
+            refined_p2 = await refine_search_results(
+                query_items=phase2_expanded,
+                search_results_by_query=p2_search_by_query,
+                company_name=company_name,
+                model_provider=model_provider,
+            )
+
+            # 정제된 컨텍스트 빌드
+            p2_search_by_persona: dict[str, list[dict]] = {}
+            for r in p2_search_results:
+                for p in phase2_personas:
+                    p2_search_by_persona.setdefault(p.name, []).append(r)
+
+            ctx2, trunc2 = _build_refined_llm_context(
+                refined_answers=refined_p2,
+                expanded_queries=phase2_expanded,
+                search_results_by_persona=p2_search_by_persona,
+                company_name=company_name,
+                target_personas=phase2_personas,
+            )
+
+            # 마이크로 에이전트 5병렬 실행
+            from backend.src.company.schemas.career_report import CareerAnalysisReport
+
+            culture, swot, phase2_agent_log, phase2_lossless = await run_phase2_micro_agents(
+                context_text=ctx2,
                 company_name=company_name,
                 topic=topic,
                 model_provider=model_provider,
+                resilience_state=resilience_state,
+                chaining_context=chaining_ctx_1,
                 job_id=job_id,
                 jobs_dict=jobs_dict,
-                chaining_context=chaining_ctx_1,
                 progress_range=(35, 60),
             )
-            all_search_results.extend(results2)
-            phase_logs["phase_2"] = vlog2
+
+            # Phase 2 결과를 CareerAnalysisReport로 조립 (기존 _merge_phase_results 호환용)
+            phase2_report = CareerAnalysisReport(corporate_culture=culture, swot_analysis=swot)
+
+            phase_logs["phase_2"] = {
+                "micro_agents": True,
+                "agent_failures": phase2_agent_log.get("agent_failures", []),
+                "lossless_verification": phase2_lossless,
+            }
             phase_context_texts["phase_2"] = ctx2
             phase_truncation_infos["phase_2"] = trunc2
-            for r in results2:
-                for p in PHASE_PERSONA_MAP[2]:
-                    if p.name not in search_results_by_persona:
-                        search_results_by_persona[p.name] = []
-                    search_results_by_persona[p.name].append(r)
+            for p_name, p_results in p2_search_by_persona.items():
+                search_results_by_persona.setdefault(p_name, []).extend(p_results)
             phase_status["phase_2"] = "completed"
         except Exception as phase2_err:
-            logger.error(f"[{job_id}] Phase 2 (심층 분석) 실패 - 후속 Phase 계속 진행: {phase2_err}")
+            logger.error(f"[{job_id}] Phase 2 (마이크로 에이전트) 실패 - 후속 Phase 계속 진행: {phase2_err}")
             phase_status["phase_2"] = f"failed: {phase2_err}"
             phase_logs["phase_2"] = {"error": str(phase2_err)}
             jobs_dict[job_id]["progress"] = 60
@@ -285,14 +331,19 @@ async def run_career_pipeline(
             {
                 "job_id": job_id,
                 "topic": topic,
-                "pipeline": "career_pipeline_v3.1",
-                "architecture": "3-phase-sequential-rag-independent-reports",
+                "pipeline": "career_pipeline_v4.0",
+                "architecture": "3-phase-sequential-rag-swot-micro-agents",
                 "personas": [p.name for p in ALL_PERSONAS],
                 "total_queries": len(processed_queries),
                 "total_search_results": len(all_search_results),
                 "model_provider": model_provider,
                 "verification_loops": verification_log.get("total_loops", 0),
                 "phase_status": phase_status,
+                "resilience_stats": resilience_state.get_stats(),
+                "phase2_micro_agents": {
+                    "agent_output_log": {k: v for k, v in phase2_agent_log.items() if k != "culture_raw"},
+                    "lossless_verification": phase2_lossless,
+                },
                 "phases": {
                     "phase_1": {
                         "name": "기초 팩트",
@@ -300,8 +351,9 @@ async def run_career_pipeline(
                         "status": phase_status["phase_1"],
                     },
                     "phase_2": {
-                        "name": "심층 분석",
+                        "name": "심층 분석 (마이크로 에이전트)",
                         "sections": ["corporate_culture", "swot_analysis"],
+                        "agents": ["culture", "strength", "weakness", "opportunity", "threat", "so_wt_strategy"],
                         "status": phase_status["phase_2"],
                     },
                     "phase_3": {
@@ -701,20 +753,29 @@ def _build_final_prompt(company_name: str, topic: str, context_text: str, chaini
     return "\n".join(parts)
 
 
-async def _call_llm(prompt: str, model_provider: str = "openai", system_prompt: str | None = None) -> str:
+async def _call_llm(
+    prompt: str,
+    model_provider: str = "openai",
+    system_prompt: str | None = None,
+    resilience_state: LLMResilienceState | None = None,
+) -> str:
     """
     LLM을 호출하여 응답을 반환합니다.
+
+    resilient_llm_call을 통해 세마포어 + 지수적 백오프 + 안전모드를 적용합니다.
 
     Args:
         prompt: 전체 프롬프트 (시스템 + 사용자)
         model_provider: 'openai' 또는 'gemini'
         system_prompt: 시스템 프롬프트 (None이면 FINAL_SYNTHESIS_PROMPT 사용)
+        resilience_state: LLM Resilience 상태 (None이면 내부 생성)
 
     Returns:
         LLM 응답 텍스트
-    """
-    import litellm
 
+    Raises:
+        ValueError: LLM이 빈 응답을 반환하거나 모든 재시도 실패 시
+    """
     if model_provider == "gemini":
         model = "gemini/gemini-2.0-flash"
         api_key = AI_CONFIG.get("google_api_key")
@@ -729,22 +790,18 @@ async def _call_llm(prompt: str, model_provider: str = "openai", system_prompt: 
     effective_system_prompt = system_prompt if system_prompt is not None else FINAL_SYNTHESIS_PROMPT
     messages = [{"role": "system", "content": effective_system_prompt}, {"role": "user", "content": prompt}]
 
-    loop = asyncio.get_running_loop()
-    response = await loop.run_in_executor(
-        None,
-        lambda: litellm.completion(
-            model=model,
-            messages=messages,
-            api_key=api_key,
-            temperature=0.3,
-            max_tokens=8000,
-            response_format={"type": "json_object"},
-        ),
+    content = await resilient_llm_call(
+        model=model,
+        messages=messages,
+        api_key=api_key,
+        state=resilience_state,
+        temperature=0.3,
+        max_tokens=8000,
+        response_format={"type": "json_object"},
     )
 
-    content = response.choices[0].message.content  # type: ignore[union-attr]
     if content is None:
-        raise ValueError("LLM이 빈 응답을 반환했습니다.")
+        raise ValueError("LLM이 빈 응답을 반환했습니다 (모든 재시도 실패).")
     return content
 
 

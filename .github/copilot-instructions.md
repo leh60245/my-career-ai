@@ -8,7 +8,7 @@ Modular Monolith: FastAPI backend + React frontend. Three domains under `backend
 |--------|------|------|
 | **Common** | `backend/src/common/` | Shared kernel — Base model, enums, config, DB connection, BaseRepository |
 | **User** | `backend/src/user/` | Auth, profiles, B2B/B2G affiliation-based access |
-| **Company** | `backend/src/company/` | Corporate analysis via Stanford STORM (RAG), talent profiles |
+| **Company** | `backend/src/company/` | Corporate analysis |
 | **Resume** | `backend/src/resume/` | Cover letter coaching (NOT ghostwriting) — 4-tier: Question→Item→Draft→Feedback |
 
 **Layering**: Controller (`main.py`) → Service → Repository → Model. Services are injected via `Depends()` + factory classmethod `from_session(cls, session)`.
@@ -90,7 +90,7 @@ docker-compose up -d   # PostgreSQL (pgvector:pg15)
 - **Sensitive files**: Never commit `.env`, `functional_specification_documents/`, or `wishlist.md`.
 - **AI Principle**: The Resume service focuses strictly on coaching, NOT ghostwriting, utilizing a Context-Aware Multi-Agent Framework.
 - **Encoding Rule**: Absolutely NO emojis are allowed in comments or logs to prevent UnicodeDecodeError issues.
-- **Environment Setup**: You must run conda activate enterprise-storm before executing any terminal commands.
+- **Environment Setup**: You must run `conda activate enterprise-storm` before executing any terminal commands.
 
 ## Testing & Quality Assurance Guidelines
 - **Test Framework**: All business logic and APIs for the Python backend must have mandatory test cases authored using pytest.
